@@ -1,11 +1,19 @@
 {
   "name": "hermes-game-engine",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "AI-first browser game engine powered by Phaser 4",
+  "description": "AI-first browser game engine powered by Phaser, Hermes and Neon",
   "scripts": {
-    "dev": "python3 -m http.server 8080",
+    "dev": "vercel dev",
+    "static": "python3 -m http.server 8080",
     "test": "node tests/run.mjs"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.0.0",
+    "@neondatabase/serverless": "^1.0.2"
+  },
+  "devDependencies": {
+    "vercel": "^59.0.0"
   }
 }

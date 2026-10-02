@@ -4,24 +4,26 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#080a0f">
-  <title>Hermes Game Engine V0.2</title>
+  <title>Hermes Game Engine V0.3</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div class="app-shell">
     <header class="topbar">
-      <div class="brand"><span class="brand-mark">H</span><div><strong>HERMES GAME ENGINE</strong><small>AI Studio · Phaser V0.2</small></div></div>
-      <div class="project-state"><span class="status-dot"></span><b>Cyber Medellín</b><span>/ main.scene</span><small id="dirtyState">● saved</small></div>
+      <div class="brand"><span class="brand-mark">H</span><div><strong>HERMES GAME ENGINE</strong><small>AI Studio · V0.3</small></div></div>
+      <div class="project-state"><span class="status-dot"></span><b>Cyber Medellín</b><span>/ <strong id="currentSceneName">Main</strong></span><small id="dirtyState">● saved</small><small id="cloudState">LOCAL</small></div>
       <div class="top-actions">
-        <button id="newBtn">Nuevo</button><button id="saveBtn">Guardar</button><button id="exportBtn">Exportar</button><label class="buttonlike">Importar<input id="importInput" type="file" accept="application/json"></label><button class="primary" id="playBtn">▶ Jugar</button>
+        <button id="newBtn">Nuevo</button><button id="saveBtn">Local</button><button id="cloudSaveBtn">☁ Guardar</button><button id="cloudLoadBtn">☁ Abrir</button><button id="cloudConfigBtn">⚙ Cloud</button><button id="testBtn">◎ AI Test</button><button id="exportBtn">Exportar</button><label class="buttonlike">Importar<input id="importInput" type="file" accept="application/json"></label><button class="primary" id="playBtn">▶ Jugar</button>
       </div>
     </header>
 
     <main class="workspace">
       <aside class="panel left-panel">
-        <div class="panel-title"><span>ESCENA</span><small id="entityCount"></small></div>
+        <div class="panel-title"><span>SCENES</span><button id="addSceneBtn" class="mini-btn">＋</button></div>
+        <div id="sceneList" class="scene-list"></div>
+        <div class="panel-title"><span>ENTITIES</span><small id="entityCount"></small></div>
         <div id="sceneTree" class="scene-tree"></div>
-        <div class="panel-title"><span>ASSETS</span><small>drag → escena</small></div>
+        <div class="panel-title"><span>ASSETS</span><button id="generateAssetBtn" class="mini-btn">✦ AI</button></div>
         <div id="assetBrowser" class="asset-browser"></div>
         <div class="panel-title"><span>TILEMAP</span><small>32×32</small></div>
         <div id="tilePalette" class="tile-palette"></div>
@@ -34,7 +36,7 @@
           <span id="modeLabel">EDIT MODE</span>
         </div>
         <div id="gameMount" class="game-mount"></div>
-        <div class="statusbar"><span id="statusMode">EDIT · SELECT</span><span>Phaser 4.2.1</span><span>1280×736</span></div>
+        <div class="statusbar"><span id="statusMode">EDIT · SELECT</span><span>Phaser 4.2.1</span><span>Neon persistence ready</span></div>
         <div class="console-panel"><div class="console-title">AGENT / ENGINE LOG</div><div id="consoleLog" class="console-log"></div></div>
       </section>
 
@@ -43,9 +45,9 @@
         <div id="inspector" class="inspector"></div>
         <section class="agent-panel">
           <div class="agent-head"><span class="spark">✦</span><div><b>HERMES COPILOT</b><small id="agentMode">LOCAL PLANNER</small></div><button id="connectHermes">Conectar</button></div>
-          <div class="quick-prompts"><button data-prompt="crea un nivel cyberpunk">Nivel cyberpunk</button><button data-prompt="agrega 3 enemigos">+ 3 enemigos</button><button data-prompt="agrega 8 monedas">+ 8 shards</button><button data-prompt="modo noche">Noche</button></div>
-          <div id="chatHistory" class="chat"><div class="message ai"><span>H</span><p>V0.2 usa tools reales. Puedo modificar entidades, tilemap e iluminación; al conectar Hermes, el mismo contrato acepta planificación libre.</p></div></div>
-          <form id="promptForm" class="prompt-box"><textarea id="promptInput" rows="3" placeholder="Ej: crea 4 enemigos y pon el mundo de noche…"></textarea><div><span id="agentBusy">ejecutando tools…</span><button type="submit">Generar ↗</button></div></form>
+          <div class="quick-prompts"><button data-prompt="crea una escena de jefe">Boss scene</button><button data-prompt="agrega 3 enemigos">+ 3 enemigos</button><button data-prompt="genera un sprite cyberpunk">Generar sprite</button><button data-prompt="prueba esta escena">AI test</button></div>
+          <div id="chatHistory" class="chat"><div class="message ai"><span>H</span><p>V0.3 entiende escenas, behaviors, assets generados y pruebas. El mismo contrato de tools puede ser controlado por tu Hermes real.</p></div></div>
+          <form id="promptForm" class="prompt-box"><textarea id="promptInput" rows="3" placeholder="Ej: crea una escena de jefe, añade drones y pruébala…"></textarea><div><span id="agentBusy">ejecutando tools…</span><button type="submit">Generar ↗</button></div></form>
         </section>
       </aside>
     </main>
