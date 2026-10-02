@@ -1,0 +1,10 @@
+{
+  "name": "hermes-game-engine",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-first 2D game engine prototype controlled by Hermes-style tools",
+  "scripts": {
+    "dev": "python3 -m http.server 8080",
+    "test": "node tests/engine.test.js"
+  }
+}
