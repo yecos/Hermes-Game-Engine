@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Hermes Game Project",
+  "type": "object",
+  "required": ["version", "project", "world"],
+  "properties": {
+    "version": {"type": "string"},
+    "project": {"type": "string"},
+    "world": {
+      "type": "object",
+      "required": ["entities"],
+      "properties": {
+        "theme": {"type": "string"},
+        "night": {"type": "boolean"},
+        "entities": {"type": "array", "items": {"type": "object", "required": ["id","type","name","x","y"]}}
+      }
+    }
+  }
+}
