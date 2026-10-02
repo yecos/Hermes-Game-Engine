@@ -1,74 +1,56 @@
 <!doctype html>
 <html lang="es">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Hermes Game Engine — AI Studio</title>
-  <link rel="stylesheet" href="styles.css" />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#080a0f">
+  <title>Hermes Game Engine V0.2</title>
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div class="app-shell">
     <header class="topbar">
-      <div class="brand"><span class="brand-mark">H</span><div><strong>HERMES GAME ENGINE</strong><small>AI Studio · V0.1</small></div></div>
-      <div class="project-title"><span class="status-dot"></span><span id="projectName">Cyber Medellín</span><span class="muted">/ main.scene</span></div>
-      <div class="toolbar">
-        <button class="ghost" id="newBtn">Nuevo</button>
-        <button class="ghost" id="saveBtn">Guardar</button>
-        <button class="ghost" id="exportBtn">Exportar</button>
-        <button class="primary" id="playBtn">▶ Jugar</button>
+      <div class="brand"><span class="brand-mark">H</span><div><strong>HERMES GAME ENGINE</strong><small>AI Studio · Phaser V0.2</small></div></div>
+      <div class="project-state"><span class="status-dot"></span><b>Cyber Medellín</b><span>/ main.scene</span><small id="dirtyState">● saved</small></div>
+      <div class="top-actions">
+        <button id="newBtn">Nuevo</button><button id="saveBtn">Guardar</button><button id="exportBtn">Exportar</button><label class="buttonlike">Importar<input id="importInput" type="file" accept="application/json"></label><button class="primary" id="playBtn">▶ Jugar</button>
       </div>
     </header>
 
     <main class="workspace">
-      <aside class="left-panel panel">
-        <div class="panel-head"><span>ESCENA</span><button class="icon-btn" id="addEntityBtn">＋</button></div>
-        <div class="scene-tree" id="sceneTree"></div>
-        <div class="panel-head assets-head"><span>CREAR</span></div>
-        <div class="asset-grid">
-          <button data-create="enemy">👾<span>Enemigo</span></button>
-          <button data-create="coin">◆<span>Moneda</span></button>
-          <button data-create="npc">◉<span>NPC</span></button>
-          <button data-create="obstacle">▰<span>Objeto</span></button>
-        </div>
-        <div class="mini-help"><b>Controles</b><span>WASD / Flechas · mover</span><span>Espacio · impulso</span><span>Click · seleccionar</span></div>
+      <aside class="panel left-panel">
+        <div class="panel-title"><span>ESCENA</span><small id="entityCount"></small></div>
+        <div id="sceneTree" class="scene-tree"></div>
+        <div class="panel-title"><span>ASSETS</span><small>drag → escena</small></div>
+        <div id="assetBrowser" class="asset-browser"></div>
+        <div class="panel-title"><span>TILEMAP</span><small>32×32</small></div>
+        <div id="tilePalette" class="tile-palette"></div>
       </aside>
 
-      <section class="stage-wrap">
-        <div class="stage-topline"><span>SCENE VIEW</span><span id="modeLabel">EDIT MODE</span></div>
-        <div class="canvas-shell">
-          <canvas id="gameCanvas" width="1280" height="720"></canvas>
-          <div class="stage-badge">main.scene · 1280×720</div>
+      <section class="center-panel">
+        <div class="editor-toolbar">
+          <div class="tool-group"><button id="selectTool" class="tool active">⌖ Seleccionar</button><button id="tileTool" class="tool">▦ Pintar tiles</button></div>
+          <div class="tool-group"><button id="undoBtn">↶ Undo</button><button id="redoBtn">↷ Redo</button></div>
+          <span id="modeLabel">EDIT MODE</span>
         </div>
-        <div class="bottom-console">
-          <div class="console-head"><span>AGENT LOG</span><span class="muted" id="fpsLabel">60 FPS</span></div>
-          <div id="consoleLog" class="console-log"></div>
-        </div>
+        <div id="gameMount" class="game-mount"></div>
+        <div class="statusbar"><span id="statusMode">EDIT · SELECT</span><span>Phaser 4.2.1</span><span>1280×736</span></div>
+        <div class="console-panel"><div class="console-title">AGENT / ENGINE LOG</div><div id="consoleLog" class="console-log"></div></div>
       </section>
 
-      <aside class="right-panel panel">
-        <div class="panel-head"><span>INSPECTOR</span><span class="muted" id="selectedType">—</span></div>
-        <div id="inspector" class="inspector empty-state">Selecciona una entidad</div>
-        <div class="ai-panel">
-          <div class="ai-head"><span class="ai-spark">✦</span><div><b>HERMES COPILOT</b><small>Genera y modifica el juego</small></div><span class="online">ONLINE</span></div>
-          <div class="quick-prompts">
-            <button data-prompt="crea un nivel cyberpunk">Nivel cyberpunk</button>
-            <button data-prompt="agrega 3 enemigos">+ 3 enemigos</button>
-            <button data-prompt="agrega 5 monedas">+ 5 monedas</button>
-            <button data-prompt="modo noche">Modo noche</button>
-          </div>
-          <div class="chat" id="chatHistory">
-            <div class="msg ai"><span>H</span><p>Dime qué quieres construir. Puedo crear entidades, cambiar el mundo y modificar el gameplay.</p></div>
-          </div>
-          <form id="promptForm" class="prompt-box">
-            <textarea id="promptInput" rows="3" placeholder="Ej: crea una calle cyberpunk con 4 enemigos y 8 monedas..."></textarea>
-            <button type="submit" class="send-btn">Generar ↗</button>
-          </form>
-        </div>
+      <aside class="panel right-panel">
+        <div class="panel-title"><span>INSPECTOR</span><small id="selectedType">—</small></div>
+        <div id="inspector" class="inspector"></div>
+        <section class="agent-panel">
+          <div class="agent-head"><span class="spark">✦</span><div><b>HERMES COPILOT</b><small id="agentMode">LOCAL PLANNER</small></div><button id="connectHermes">Conectar</button></div>
+          <div class="quick-prompts"><button data-prompt="crea un nivel cyberpunk">Nivel cyberpunk</button><button data-prompt="agrega 3 enemigos">+ 3 enemigos</button><button data-prompt="agrega 8 monedas">+ 8 shards</button><button data-prompt="modo noche">Noche</button></div>
+          <div id="chatHistory" class="chat"><div class="message ai"><span>H</span><p>V0.2 usa tools reales. Puedo modificar entidades, tilemap e iluminación; al conectar Hermes, el mismo contrato acepta planificación libre.</p></div></div>
+          <form id="promptForm" class="prompt-box"><textarea id="promptInput" rows="3" placeholder="Ej: crea 4 enemigos y pon el mundo de noche…"></textarea><div><span id="agentBusy">ejecutando tools…</span><button type="submit">Generar ↗</button></div></form>
+        </section>
       </aside>
     </main>
   </div>
-  <script src="engine.js"></script>
-  <script src="ai.js"></script>
-  <script src="app.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.min.js"></script>
+  <script type="module" src="src/editor.js"></script>
 </body>
 </html>

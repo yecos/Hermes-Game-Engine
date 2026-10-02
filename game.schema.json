@@ -1,18 +1,41 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Hermes Game Project",
+  "$id": "https://hermes-game-engine/schema/project-v0.2.json",
+  "title": "Hermes Game Engine Project V0.2",
   "type": "object",
-  "required": ["version", "project", "world"],
+  "required": ["version", "name", "settings", "tilemap", "entities"],
   "properties": {
-    "version": {"type": "string"},
-    "project": {"type": "string"},
-    "world": {
+    "version": { "const": "0.2.0" },
+    "name": { "type": "string" },
+    "scene": { "type": "string" },
+    "settings": {
       "type": "object",
-      "required": ["entities"],
+      "required": ["width", "height", "tileSize", "night"],
       "properties": {
-        "theme": {"type": "string"},
-        "night": {"type": "boolean"},
-        "entities": {"type": "array", "items": {"type": "object", "required": ["id","type","name","x","y"]}}
+        "width": { "type": "integer", "minimum": 320 },
+        "height": { "type": "integer", "minimum": 180 },
+        "tileSize": { "type": "integer", "minimum": 8 },
+        "night": { "type": "boolean" }
+      }
+    },
+    "tilemap": {
+      "type": "object",
+      "required": ["width", "height", "tiles"],
+      "properties": {
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "tiles": { "type": "array", "items": { "type": "array", "items": { "type": "integer", "minimum": 0 } } }
+      }
+    },
+    "entities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "name", "x", "y", "color"],
+        "properties": {
+          "id": { "type": "string" }, "type": { "type": "string" }, "name": { "type": "string" },
+          "x": { "type": "number" }, "y": { "type": "number" }, "color": { "type": "string" }
+        }
       }
     }
   }
