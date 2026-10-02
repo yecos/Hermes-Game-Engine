@@ -1,0 +1,11 @@
+const fs=require('fs'),vm=require('vm');
+global.window={addEventListener(){}};global.document={activeElement:null};global.requestAnimationFrame=()=>{};
+const ctx=new Proxy({},{get:()=>()=>{},set:()=>true});
+const canvas={width:1280,height:720,style:{},getContext:()=>ctx,addEventListener(){},parentElement:{getBoundingClientRect:()=>({width:900,height:600})}};
+vm.runInThisContext(fs.readFileSync('engine.js','utf8')+'\nglobalThis.HermesEngine=HermesEngine');
+vm.runInThisContext(fs.readFileSync('ai.js','utf8')+'\nglobalThis.HermesCopilot=HermesCopilot');
+const e=new HermesEngine(canvas),ai=new HermesCopilot(e,()=>{}),initial=e.world.entities.length;
+ai.run('agrega 3 enemigos'); if(e.world.entities.length!==initial+3) throw new Error('enemy command');
+ai.run('modo noche'); if(!e.world.night) throw new Error('night command');
+ai.run('crea un nivel cyberpunk'); if(e.world.entities.length<10) throw new Error('level generation');
+JSON.parse(e.serialize()); console.log('Hermes Game Engine tests: OK');
