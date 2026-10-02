@@ -1,42 +1,31 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://hermes-game-engine/schema/project-v0.2.json",
-  "title": "Hermes Game Engine Project V0.2",
+  "$id": "https://hermes-game-engine/schema/project-v0.3.json",
+  "title": "Hermes Game Engine Project V0.3",
   "type": "object",
-  "required": ["version", "name", "settings", "tilemap", "entities"],
+  "required": ["version", "id", "name", "currentSceneId", "scenes", "behaviors", "assets"],
   "properties": {
-    "version": { "const": "0.2.0" },
+    "version": { "const": "0.3.0" },
+    "id": { "type": "string" },
     "name": { "type": "string" },
-    "scene": { "type": "string" },
-    "settings": {
-      "type": "object",
-      "required": ["width", "height", "tileSize", "night"],
-      "properties": {
-        "width": { "type": "integer", "minimum": 320 },
-        "height": { "type": "integer", "minimum": 180 },
-        "tileSize": { "type": "integer", "minimum": 8 },
-        "night": { "type": "boolean" }
-      }
-    },
-    "tilemap": {
-      "type": "object",
-      "required": ["width", "height", "tiles"],
-      "properties": {
-        "width": { "type": "integer", "minimum": 1 },
-        "height": { "type": "integer", "minimum": 1 },
-        "tiles": { "type": "array", "items": { "type": "array", "items": { "type": "integer", "minimum": 0 } } }
-      }
-    },
-    "entities": {
+    "currentSceneId": { "type": "string" },
+    "scenes": {
       "type": "array",
+      "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["id", "type", "name", "x", "y", "color"],
+        "required": ["id", "name", "settings", "tilemap", "entities"],
         "properties": {
-          "id": { "type": "string" }, "type": { "type": "string" }, "name": { "type": "string" },
-          "x": { "type": "number" }, "y": { "type": "number" }, "color": { "type": "string" }
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "settings": { "type": "object" },
+          "tilemap": { "type": "object" },
+          "entities": { "type": "array" }
         }
       }
-    }
+    },
+    "behaviors": { "type": "array" },
+    "assets": { "type": "array" },
+    "metadata": { "type": "object" }
   }
 }
