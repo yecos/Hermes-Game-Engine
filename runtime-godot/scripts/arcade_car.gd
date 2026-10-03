@@ -40,6 +40,16 @@ extends CharacterBody3D
 @export var spin_recovery_strength: float = 12.0
 @export var surface_grip_offroad: float = 0.58
 
+@export_group("Driver Feel")
+@export var throttle_rise_rate: float = 3.8
+@export var throttle_release_rate: float = 7.5
+@export var brake_rise_rate: float = 9.0
+@export var brake_release_rate: float = 11.0
+@export var steering_input_rate: float = 4.8
+@export var steering_return_rate: float = 7.0
+@export var countersteer_input_rate: float = 8.5
+@export var input_deadzone: float = 0.015
+
 # ---------------------------------------------------------------------------
 # Engine / transmission
 # ---------------------------------------------------------------------------
@@ -58,6 +68,8 @@ extends CharacterBody3D
 @export var gear_ratios: Array[float] = [3.20, 2.25, 1.70, 1.35, 1.10]
 @export var upshift_times: Array[float] = [0.24, 0.20, 0.18, 0.17]
 @export var downshift_time: float = 0.18
+@export var shift_lockout_time: float = 0.14
+@export var downshift_blip_rpm: float = 260.0
 
 # ---------------------------------------------------------------------------
 # Consumables
@@ -123,9 +135,12 @@ var lateral_accel: float = 0.0
 var _previous_longitudinal_speed: float = 0.0
 var _shift_timer: float = 0.0
 var _shift_total_time: float = 0.0
+var _shift_lockout_timer: float = 0.0
+var _shift_from_gear: int = 1
 var _shift_committed: bool = false
 var _shift_kick: float = 0.0
 var _stationary_reverse_hold: float = 0.0
+var _steering_reversal_target: float = 0.0
 var _autopilot_stuck_time: float = 0.0
 
 var _visual: Node3D
@@ -173,10 +188,11 @@ func _physics_process(delta: float) -> void:
 		steer = float(controls.steer)
 		boost = bool(controls.boost)
 		pit_requested = false
-
-	throttle_input = clampf(throttle, 0.0, 1.0)
-	brake_input = clampf(brake_reverse, 0.0, 1.0)
-	steering_input = clampf(steer, -1.0, 1.0)
+		throttle_input = clampf(throttle, 0.0, 1.0)
+		brake_input = clampf(brake_reverse, 0.0, 1.0)
+		steering_input = clampf(steer, -1.0, 1.0)
+	else:
+		_update_driver_inputs(delta, throttle, brake_reverse, steer)
 
 	in_pit_lane = track != null and track.is_in_pit_zone(global_position)
 	is_offroad = track != null and not track.is_on_track(global_position, -0.20)
@@ -189,6 +205,59 @@ func _physics_process(delta: float) -> void:
 
 	if autopilot_enabled and _update_autopilot_recovery(delta):
 		return
+
+func _update_driver_inputs(
+	delta: float,
+	throttle_target: float,
+	brake_target: float,
+	steer_target: float
+) -> void:
+	throttle_target = clampf(throttle_target, 0.0, 1.0)
+	brake_target = clampf(brake_target, 0.0, 1.0)
+	steer_target = clampf(steer_target, -1.0, 1.0)
+
+	var throttle_rate := throttle_rise_rate if throttle_target > throttle_input else throttle_release_rate
+	var brake_rate := brake_rise_rate if brake_target > brake_input else brake_release_rate
+	throttle_input = move_toward(throttle_input, throttle_target, throttle_rate * delta)
+	brake_input = move_toward(brake_input, brake_target, brake_rate * delta)
+
+	if absf(steer_target) < input_deadzone:
+		steer_target = 0.0
+
+	# Analog inputs get a little extra precision around center. Keyboard input still
+	# reaches full lock, but the temporal ramp prevents A/D from behaving like switches.
+	if absf(steer_target) > 0.0:
+		steer_target = signf(steer_target) * pow(absf(steer_target), 1.08)
+
+	if (
+		absf(steer_target) > 0.10
+		and absf(steering_input) > 0.10
+		and signf(steer_target) != signf(steering_input)
+	):
+		_steering_reversal_target = signf(steer_target)
+
+	if (
+		_steering_reversal_target != 0.0
+		and (
+			absf(steer_target) < 0.10
+			or signf(steer_target) != signf(_steering_reversal_target)
+		)
+	):
+		_steering_reversal_target = 0.0
+
+	var steering_rate := steering_input_rate
+	if is_zero_approx(steer_target):
+		steering_rate = steering_return_rate
+	elif _steering_reversal_target != 0.0:
+		steering_rate = countersteer_input_rate
+
+	steering_input = move_toward(steering_input, steer_target, steering_rate * delta)
+
+	if (
+		_steering_reversal_target != 0.0
+		and absf(steering_input - steer_target) < 0.06
+	):
+		_steering_reversal_target = 0.0
 
 func _step_vehicle_dynamics(delta: float, boost: bool) -> void:
 	var speed_abs := absf(longitudinal_speed)
@@ -310,7 +379,14 @@ func _step_vehicle_dynamics(delta: float, boost: bool) -> void:
 		var kinematic_yaw := longitudinal_speed / maxf(0.5, wheelbase) * tan(steering_angle)
 		var grip_yaw_limit := surface_mu * GRAVITY_ACCEL / maxf(5.0, speed_abs) * 0.94
 		var desired_yaw_rate := clampf(kinematic_yaw, -grip_yaw_limit, grip_yaw_limit)
+		var countersteering := (
+			absf(steering_angle) > deg_to_rad(1.0)
+			and absf(yaw_rate) > deg_to_rad(3.0)
+			and signf(steering_angle) != signf(yaw_rate)
+		)
 		var esc_strength := stability_assist * smoothstep(3.0, 16.0, absf(vehicle_slip_angle_deg))
+		if countersteering:
+			esc_strength *= 1.42
 		yaw_accel += (desired_yaw_rate - yaw_rate) * esc_strength * 5.5
 
 		# When yaw exceeds what the current grip can sustain, individual-wheel
@@ -319,7 +395,8 @@ func _step_vehicle_dynamics(delta: float, boost: bool) -> void:
 		var drift_yaw_limit := grip_yaw_limit * 1.34 + 0.08
 		if absf(yaw_rate) > drift_yaw_limit:
 			var bounded_yaw := clampf(yaw_rate, -drift_yaw_limit, drift_yaw_limit)
-			yaw_accel += (bounded_yaw - yaw_rate) * 5.2
+			var yaw_recovery := 6.2 if countersteering else 5.2
+			yaw_accel += (bounded_yaw - yaw_rate) * yaw_recovery
 
 	_previous_longitudinal_speed = longitudinal_speed
 	longitudinal_speed += accel_x * delta
@@ -340,10 +417,16 @@ func _step_vehicle_dynamics(delta: float, boost: bool) -> void:
 		var max_lateral_speed := tan(deg_to_rad(max_controlled_slip_deg)) * maxf(5.0, absf(longitudinal_speed))
 		if absf(lateral_speed_body) > max_lateral_speed:
 			var target_lateral := signf(lateral_speed_body) * max_lateral_speed
+			var countersteer_recovery := (
+				absf(steering_angle) > deg_to_rad(1.0)
+				and absf(yaw_rate) > deg_to_rad(3.0)
+				and signf(steering_angle) != signf(yaw_rate)
+			)
+			var recovery_strength := spin_recovery_strength * (1.30 if countersteer_recovery else 1.0)
 			lateral_speed_body = lerpf(
 				lateral_speed_body,
 				target_lateral,
-				1.0 - exp(-spin_recovery_strength * delta)
+				1.0 - exp(-recovery_strength * delta)
 			)
 
 	# Aerodynamic / chassis yaw damping grows with speed.
@@ -450,18 +533,33 @@ func _max_brake_force_newtons() -> float:
 
 func _update_transmission(delta: float, allow_reverse: bool) -> void:
 	_shift_kick = move_toward(_shift_kick, 0.0, delta * 5.0)
+	_shift_lockout_timer = maxf(0.0, _shift_lockout_timer - delta)
 
 	if is_shifting:
 		_shift_timer = maxf(0.0, _shift_timer - delta)
+
+		var shift_target_rpm := _rpm_for_speed(longitudinal_speed, pending_gear)
+		var is_downshift := pending_gear > 0 and _shift_from_gear > pending_gear
+		if is_downshift:
+			var blip_shape := sin(clampf(1.0 - _shift_timer / maxf(0.001, _shift_total_time), 0.0, 1.0) * PI)
+			shift_target_rpm += downshift_blip_rpm * blip_shape
+
+		var shift_rpm_response := 14.0 if is_downshift else 9.0
+		engine_rpm = lerpf(
+			engine_rpm,
+			clampf(shift_target_rpm, idle_rpm, redline_rpm + 150.0),
+			1.0 - exp(-shift_rpm_response * delta)
+		)
+
 		var commit_at := _shift_total_time * 0.48
 		if not _shift_committed and _shift_timer <= commit_at:
 			current_gear = pending_gear
 			_shift_committed = true
-			engine_rpm = _rpm_for_speed(longitudinal_speed, current_gear)
 
 		if _shift_timer <= 0.0:
 			is_shifting = false
 			_shift_committed = true
+			_shift_lockout_timer = shift_lockout_time
 		return
 
 	_update_engine_rpm(delta)
@@ -481,6 +579,8 @@ func _update_transmission(delta: float, allow_reverse: bool) -> void:
 
 	if current_gear <= 0 or is_shifting:
 		return
+	if _shift_lockout_timer > 0.0:
+		return
 
 	var throttle_shift_target := lerpf(upshift_rpm_light_throttle, upshift_rpm_full_throttle, throttle_input)
 	if engine_rpm >= throttle_shift_target and current_gear < gear_ratios.size():
@@ -495,6 +595,7 @@ func _update_transmission(delta: float, allow_reverse: bool) -> void:
 func _begin_shift(new_gear: int) -> void:
 	if is_shifting or new_gear == current_gear:
 		return
+	_shift_from_gear = current_gear
 	pending_gear = clampi(new_gear, -1, gear_ratios.size())
 
 	if current_gear > 0 and pending_gear > current_gear:
@@ -562,6 +663,8 @@ func reset_transmission() -> void:
 	is_shifting = false
 	_shift_timer = 0.0
 	_shift_total_time = 0.0
+	_shift_lockout_timer = 0.0
+	_shift_from_gear = 1
 	_shift_committed = true
 	_shift_kick = 0.0
 	_stationary_reverse_hold = 0.0
@@ -584,7 +687,11 @@ func reset_dynamics() -> void:
 	rear_slip_angle_deg = 0.0
 	front_tire_saturation = 0.0
 	rear_tire_saturation = 0.0
+	throttle_input = 0.0
+	brake_input = 0.0
+	steering_input = 0.0
 	steering_angle_deg = 0.0
+	_steering_reversal_target = 0.0
 	_autopilot_stuck_time = 0.0
 	reset_transmission()
 
