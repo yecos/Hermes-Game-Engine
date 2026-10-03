@@ -7,9 +7,11 @@ static func road_material() -> ShaderMaterial:
 shader_type spatial;
 render_mode cull_disabled, diffuse_burley, specular_schlick_ggx;
 
-uniform vec4 asphalt_color : source_color = vec4(0.105, 0.12, 0.135, 1.0);
-uniform vec4 rubber_color : source_color = vec4(0.035, 0.04, 0.045, 1.0);
-uniform float roughness_value = 0.82;
+uniform vec4 asphalt_dark : source_color = vec4(0.060, 0.068, 0.075, 1.0);
+uniform vec4 asphalt_mid : source_color = vec4(0.105, 0.115, 0.125, 1.0);
+uniform vec4 asphalt_warm : source_color = vec4(0.135, 0.128, 0.116, 1.0);
+uniform vec4 rubber_color : source_color = vec4(0.022, 0.024, 0.027, 1.0);
+uniform vec4 repair_color : source_color = vec4(0.075, 0.078, 0.079, 1.0);
 
 float hash21(vec2 p) {
 	p = fract(p * vec2(123.34, 456.21));
@@ -17,17 +19,52 @@ float hash21(vec2 p) {
 	return fract(p.x * p.y);
 }
 
+float noise2(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	float a = hash21(i);
+	float b = hash21(i + vec2(1.0, 0.0));
+	float c = hash21(i + vec2(0.0, 1.0));
+	float d = hash21(i + vec2(1.0, 1.0));
+	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
 void fragment() {
-	float grain = hash21(floor(UV * vec2(420.0, 1500.0)));
-	float fine_grain = hash21(floor(UV * vec2(1300.0, 4500.0)));
-	float center = 1.0 - smoothstep(0.11, 0.32, abs(UV.x - 0.5));
-	float rubber_noise = hash21(floor(UV * vec2(18.0, 260.0)));
-	float rubber = center * smoothstep(0.48, 0.90, rubber_noise) * 0.28;
-	vec3 base = asphalt_color.rgb * (0.86 + grain * 0.10 + fine_grain * 0.035);
-	base = mix(base, rubber_color.rgb, rubber);
+	float macro = noise2(UV * vec2(3.5, 22.0));
+	float patches = noise2(UV * vec2(9.0, 70.0) + vec2(8.4, 2.1));
+	float aggregate = hash21(floor(UV * vec2(1250.0, 5200.0)));
+	float aggregate2 = hash21(floor(UV * vec2(420.0, 1800.0)) + 17.0);
+
+	vec3 base = mix(asphalt_dark.rgb, asphalt_mid.rgb, 0.42 + macro * 0.42);
+	base = mix(base, asphalt_warm.rgb, smoothstep(0.72, 0.94, patches) * 0.13);
+	base *= 0.91 + aggregate * 0.08 + aggregate2 * 0.035;
+
+	// Two driven wheel lanes plus a softer center racing groove.
+	float left_lane = exp(-pow((UV.x - 0.34) / 0.075, 2.0));
+	float right_lane = exp(-pow((UV.x - 0.66) / 0.075, 2.0));
+	float center_lane = exp(-pow((UV.x - 0.50) / 0.21, 4.0));
+	float longitudinal_breakup = 0.55 + 0.45 * noise2(vec2(UV.y * 165.0, UV.x * 8.0));
+	float rubber = clamp((left_lane + right_lane) * 0.34 + center_lane * 0.12, 0.0, 0.72);
+	rubber *= longitudinal_breakup;
+
+	// Localized repair bands and old seam lines break the procedural uniformity.
+	float seam_grid = abs(fract(UV.y * 31.0 + noise2(vec2(UV.y * 5.0, 3.0)) * 0.16) - 0.5);
+	float seam = 1.0 - smoothstep(0.465, 0.495, seam_grid);
+	seam *= smoothstep(0.67, 0.88, noise2(vec2(UV.y * 12.0, 7.3))) * 0.42;
+	float repair = smoothstep(0.76, 0.92, noise2(UV * vec2(5.5, 38.0) + vec2(12.0, 4.0))) * 0.22;
+
+	base = mix(base, repair_color.rgb, repair);
+	base = mix(base, rubber_color.rgb, clamp(rubber + seam * 0.23, 0.0, 0.78));
+
+	// Slightly cleaner aggregate toward the white-line edges.
+	float edge = smoothstep(0.35, 0.49, abs(UV.x - 0.5));
+	base *= 1.0 + edge * 0.035;
+
 	ALBEDO = base;
-	ROUGHNESS = roughness_value - grain * 0.08;
-	METALLIC = 0.02;
+	ROUGHNESS = clamp(0.88 - aggregate * 0.075 - rubber * 0.10 + repair * 0.04, 0.64, 0.95);
+	METALLIC = 0.012;
+	SPECULAR = 0.42;
 }
 """
 	var material := ShaderMaterial.new()

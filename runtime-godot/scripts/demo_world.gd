@@ -134,13 +134,22 @@ func _spawn_asset(
 	var asset := AssetLibrary3D.instantiate_asset(asset_name)
 	if asset == null:
 		return null
+	if asset_name.begins_with("tree_"):
+		var tree_variant := int(absf(position_value.x * 0.17 + position_value.z * 0.11)) % 4
+		AssetLibrary3D.style_tree(asset, tree_variant)
 
 	asset.position = Vector3(
 		position_value.x,
 		TerrainBuilder3D.height_at(position_value.x, position_value.z) + position_value.y,
 		position_value.z
 	)
-	asset.scale = Vector3.ONE * scale_value
+	if asset_name.begins_with("tree_"):
+		var tree_variant_scale := int(absf(position_value.x * 0.13 + position_value.z * 0.19)) % 4
+		var width_scale: float = float([0.84, 0.96, 1.08, 0.91][tree_variant_scale])
+		var height_scale: float = float([1.16, 0.94, 1.08, 1.24][tree_variant_scale])
+		asset.scale = Vector3(scale_value * width_scale, scale_value * height_scale, scale_value * width_scale)
+	else:
+		asset.scale = Vector3.ONE * scale_value
 	asset.rotation.y = deg_to_rad(rotation_degrees_y)
 	var lod_distance := 115.0 if asset_name == "grandstand" or asset_name == "light_mast" else 85.0
 	AssetLibrary3D.apply_lod(asset, lod_distance, 14.0)
@@ -162,6 +171,9 @@ func _spawn_safe_trackside_asset(
 	var asset := AssetLibrary3D.instantiate_asset(asset_name)
 	if asset == null:
 		return null
+	var visual_variant := int(floor(fposmod(ratio, 1.0) * 997.0 + absf(side) * 17.0)) % 4
+	if asset_name.begins_with("tree_"):
+		AssetLibrary3D.style_tree(asset, visual_variant)
 
 	var frame := track.get_world_transform_at_ratio(ratio)
 	var barrier_offset := track.get_barrier_offset(side, ratio)
@@ -177,7 +189,12 @@ func _spawn_safe_trackside_asset(
 	root.add_child(asset)
 	asset.global_position = target
 	asset.rotation.y = yaw
-	asset.scale = Vector3.ONE * scale_value
+	if asset_name.begins_with("tree_"):
+		var width_scale: float = float([0.82, 0.95, 1.08, 0.90][visual_variant])
+		var height_scale: float = float([1.22, 0.94, 1.08, 1.30][visual_variant])
+		asset.scale = Vector3(scale_value * width_scale, scale_value * height_scale, scale_value * width_scale)
+	else:
+		asset.scale = Vector3.ONE * scale_value
 	asset.add_to_group("safe_trackside_prop")
 
 	var lod_distance := 120.0
@@ -185,7 +202,7 @@ func _spawn_safe_trackside_asset(
 		lod_distance = 230.0
 	elif asset_name == "light_mast":
 		lod_distance = 210.0
-	elif asset_name == "tree_lush":
+	elif asset_name.begins_with("tree_"):
 		lod_distance = 155.0
 	elif asset_name == "paddock_tent" or asset_name == "service_van":
 		lod_distance = 145.0
@@ -237,9 +254,11 @@ func _rebuild_safe_trackside() -> void:
 		var side := -1.0 if i % 2 == 0 else 1.0
 		var extra := 10.0 + float((i * 7) % 7) * 2.3
 		var scale_value := 0.76 + float(i % 5) * 0.11
-		_spawn_safe_trackside_asset(root, "tree_lush", ratio, side, extra, scale_value, float(i * 37))
+		var tree_asset := "tree_pine" if i % 5 == 2 else "tree_lush"
+		_spawn_safe_trackside_asset(root, tree_asset, ratio, side, extra, scale_value, float(i * 37))
 		if i % 3 == 0:
-			_spawn_safe_trackside_asset(root, "tree_lush", fposmod(ratio + 0.0035, 1.0), side, extra + 7.0, scale_value * 1.12, float(i * 53 + 17))
+			var back_tree_asset := "tree_pine" if i % 4 == 0 else "tree_lush"
+			_spawn_safe_trackside_asset(root, back_tree_asset, fposmod(ratio + 0.0035, 1.0), side, extra + 7.0, scale_value * 1.12, float(i * 53 + 17))
 
 	# Lighting landmarks around the major braking and spectator zones.
 	for data in [
@@ -751,8 +770,11 @@ func _build_scenery() -> void:
 		_create_tree(tree_positions[i], 0.9 + float(i % 4) * 0.12)
 
 func _create_tree(position_value: Vector3, scale_value: float) -> void:
-	var tree := AssetLibrary3D.instantiate_asset("tree_lush")
+	var tree_variant := int(absf(position_value.x * 0.17 + position_value.z * 0.11)) % 4
+	var tree_name := "tree_pine" if tree_variant == 2 else "tree_lush"
+	var tree := AssetLibrary3D.instantiate_asset(tree_name)
 	if tree:
+		AssetLibrary3D.style_tree(tree, tree_variant)
 		tree.position = Vector3(
 			position_value.x,
 			TerrainBuilder3D.height_at(position_value.x, position_value.z),

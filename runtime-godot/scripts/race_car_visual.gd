@@ -36,7 +36,9 @@ static func cylinder(radius: float, height: float, position: Vector3, mat: Mater
 	return node
 
 static func build(parent: Node3D, body_color: Color, accent_color: Color = Color("#f6f4ed")) -> Dictionary:
-	var imported := AssetLibrary3D.instantiate_asset("gt_car")
+	var imported := AssetLibrary3D.instantiate_asset("gt_car_v2")
+	if imported == null:
+		imported = AssetLibrary3D.instantiate_asset("gt_car")
 	if imported:
 		imported.name = "RaceCarVisual"
 		imported.rotation.y = PI

@@ -62,6 +62,10 @@ func _init() -> void:
 
 	var flag_count := _count_named(safe, "MarshalFlag")
 	assert(flag_count >= 5, "Animated marshal flags missing")
+	var pine_count := _count_prefix(safe, "tree_pine") + _count_prefix(safe, "Tree_Pine")
+	var lush_count := _count_prefix(safe, "tree_lush") + _count_prefix(safe, "Tree_Lush")
+	assert(pine_count >= 6, "Pine vegetation layer missing")
+	assert(lush_count >= 20, "Broadleaf vegetation layer missing")
 
 	print(
 		"HGE_TRACKSIDE_ENV_OK props=", safe_props.size(),
@@ -72,7 +76,9 @@ func _init() -> void:
 		" landmarks=", landmarks.get_child_count(),
 		" hills=", landscape.get_child_count(),
 		" floodlights=", flood_count,
-		" flags=", flag_count
+		" flags=", flag_count,
+		" pines=", pine_count,
+		" lush=", lush_count
 	)
 
 	world.queue_free()
@@ -84,4 +90,10 @@ func _count_named(node: Node, wanted: String) -> int:
 	var count := 1 if String(node.name) == wanted else 0
 	for child in node.get_children():
 		count += _count_named(child, wanted)
+	return count
+
+func _count_prefix(node: Node, prefix: String) -> int:
+	var count := 1 if String(node.name).begins_with(prefix) else 0
+	for child in node.get_children():
+		count += _count_prefix(child, prefix)
 	return count
