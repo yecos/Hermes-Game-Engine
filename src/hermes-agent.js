@@ -46,18 +46,23 @@ export class HermesAgent {
   }
 
   async autoDetect() {
-    if (this.endpoint) {
-      try { return await this.testConnection(this.endpoint); }
-      catch { return null; }
+    const candidates = [...new Set(
+      [this.endpoint, DEFAULT_BRIDGE_ENDPOINT].filter(Boolean)
+    )];
+
+    for (const endpoint of candidates) {
+      try {
+        const info = await this.testConnection(endpoint);
+        this.setEndpoint(endpoint);
+        this.connection = info;
+        return info;
+      } catch {
+        // Try the next known local bridge endpoint.
+      }
     }
-    try {
-      const info = await this.testConnection(DEFAULT_BRIDGE_ENDPOINT);
-      this.setEndpoint(DEFAULT_BRIDGE_ENDPOINT);
-      this.connection = info;
-      return info;
-    } catch {
-      return null;
-    }
+
+    if (this.endpoint) this.setEndpoint('');
+    return null;
   }
 
   async run(prompt) {
