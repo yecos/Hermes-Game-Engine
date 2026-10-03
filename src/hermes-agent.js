@@ -4,13 +4,32 @@ export class HermesAgent {
   constructor(store, tools, options = {}) {
     this.store = store;
     this.tools = tools;
-    this.endpoint = options.endpoint ?? globalThis.HERMES_AGENT_ENDPOINT ?? localStorage.getItem('hge:hermes-endpoint') ?? '';
+    this.endpoint = this.normalizeEndpoint(
+      options.endpoint ?? globalThis.HERMES_AGENT_ENDPOINT ?? localStorage.getItem('hge:hermes-endpoint') ?? ''
+    );
     this.onRun = options.onRun;
     this.connection = null;
   }
 
+  normalizeEndpoint(endpoint) {
+    const value = String(endpoint || '').trim();
+    if (!value) return '';
+    try {
+      const url = new URL(value);
+      const isLocalBridge =
+        (url.hostname === '127.0.0.1' || url.hostname === 'localhost') &&
+        url.port === '8643';
+      if (isLocalBridge && (url.pathname === '' || url.pathname === '/')) {
+        url.pathname = '/plan';
+      }
+      return url.toString().replace(/\/$/, '');
+    } catch {
+      return value;
+    }
+  }
+
   setEndpoint(endpoint, { persist = true } = {}) {
-    this.endpoint = String(endpoint || '').trim();
+    this.endpoint = this.normalizeEndpoint(endpoint);
     this.connection = null;
     if (!persist) return;
     if (this.endpoint) localStorage.setItem('hge:hermes-endpoint', this.endpoint);
