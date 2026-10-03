@@ -865,6 +865,14 @@ func _barrier_transform(frame: Dictionary, side: float, offset: float, height: f
 	var origin: Vector3 = frame.point + frame.right * side * offset + frame.normal * height
 	return Transform3D(basis, origin)
 
+func trackside_offset_conflicts(ratio: float, side: float, offset: float) -> bool:
+	var length := get_length()
+	if length <= 0.0:
+		return false
+	var wrapped := fposmod(ratio, 1.0)
+	var distance := wrapped * length
+	return _barrier_conflicts_with_other_track(_sample_frame(distance), side, offset, distance)
+
 func _barrier_conflicts_with_other_track(
 	frame: Dictionary,
 	side: float,

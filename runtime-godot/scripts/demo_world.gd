@@ -53,8 +53,8 @@ func _build_environment() -> void:
 	var environment := Environment.new()
 	var sky := Sky.new()
 	var sky_material := ProceduralSkyMaterial.new()
-	sky_material.sky_top_color = Color("#4b9fe8")
-	sky_material.sky_horizon_color = Color("#b9e4ff")
+	sky_material.sky_top_color = Color("#337fc1")
+	sky_material.sky_horizon_color = Color("#acd8ee")
 	sky_material.ground_horizon_color = Color("#c8d6ad")
 	sky_material.ground_bottom_color = Color("#526a42")
 	sky_material.sun_angle_max = 22.0
@@ -65,14 +65,14 @@ func _build_environment() -> void:
 	environment.sky = sky
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	environment.ambient_light_color = Color("#d9e9f2")
-	environment.ambient_light_energy = 0.72
+	environment.ambient_light_energy = 0.62
 	environment.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 	environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	environment.tonemap_exposure = 1.08
+	environment.tonemap_exposure = 0.98
 	environment.adjustment_enabled = true
-	environment.adjustment_brightness = 1.03
-	environment.adjustment_contrast = 1.06
-	environment.adjustment_saturation = 1.08
+	environment.adjustment_brightness = 1.0
+	environment.adjustment_contrast = 1.09
+	environment.adjustment_saturation = 1.05
 
 	_set_env_if_exists(environment, "ssao_enabled", true)
 	_set_env_if_exists(environment, "ssao_radius", 1.6)
@@ -83,8 +83,8 @@ func _build_environment() -> void:
 	_set_env_if_exists(environment, "glow_bloom", 0.045)
 	_set_env_if_exists(environment, "fog_enabled", true)
 	_set_env_if_exists(environment, "fog_light_color", Color("#d7e9f5"))
-	_set_env_if_exists(environment, "fog_density", 0.0012)
-	_set_env_if_exists(environment, "fog_sky_affect", 0.08)
+	_set_env_if_exists(environment, "fog_density", 0.00055)
+	_set_env_if_exists(environment, "fog_sky_affect", 0.04)
 
 	environment_node.environment = environment
 	add_child(environment_node)
@@ -93,7 +93,7 @@ func _build_environment() -> void:
 	sun.name = "Sun"
 	sun.rotation_degrees = Vector3(-46.0, -34.0, 0.0)
 	sun.light_color = Color("#fff2d3")
-	sun.light_energy = 1.65
+	sun.light_energy = 1.45
 	sun.shadow_enabled = true
 	add_child(sun)
 
@@ -149,7 +149,10 @@ func _spawn_safe_trackside_asset(
 
 	var frame := track.get_world_transform_at_ratio(ratio)
 	var barrier_offset := track.get_barrier_offset(side, ratio)
-	var target := frame.origin + frame.basis.x * side * (barrier_offset + extra_clearance)
+	var prop_offset := barrier_offset + extra_clearance
+	if track.trackside_offset_conflicts(ratio, side, prop_offset):
+		return null
+	var target := frame.origin + frame.basis.x * side * prop_offset
 	target.y = TerrainBuilder3D.height_at(target.x, target.z)
 
 	var forward := -frame.basis.z.normalized()
@@ -159,6 +162,7 @@ func _spawn_safe_trackside_asset(
 	asset.global_position = target
 	asset.rotation.y = yaw
 	asset.scale = Vector3.ONE * scale_value
+	asset.add_to_group("safe_trackside_prop")
 
 	var lod_distance := 120.0 if asset_name == "grandstand" or asset_name == "light_mast" else 88.0
 	AssetLibrary3D.apply_lod(asset, lod_distance, 14.0)
@@ -176,30 +180,310 @@ func _rebuild_safe_trackside() -> void:
 	root.name = "SafeTrackside"
 	add_child(root)
 
-	# Only large objects well outside the physical barrier envelope.
-	_spawn_safe_trackside_asset(root, "grandstand", 0.035, -1.0, 9.0, 1.08, 180.0)
-	_spawn_safe_trackside_asset(root, "service_van", 0.965, -1.0, 7.0, 0.88, 90.0)
-	_spawn_safe_trackside_asset(root, "paddock_tent", 0.12, 1.0, 8.0, 0.95, 90.0)
-	_spawn_safe_trackside_asset(root, "paddock_tent", 0.66, -1.0, 8.5, 0.92, -90.0)
+	_build_start_finish_gantry(root)
+	_build_pro_pit_complex(root)
+	_build_braking_markers(root)
+	_build_sponsor_boards(root)
+	_build_corner_safety_props(root)
 
+	# Spectator zones sit at distinct parts of the lap instead of following the
+	# road continuously. This gives the circuit recognizable visual sectors.
 	for data in [
-		[0.04, -1.0],
-		[0.27, 1.0],
-		[0.51, -1.0],
-		[0.76, 1.0]
+		[0.025, -1.0, 10.0, 1.12, 180.0],
+		[0.285, 1.0, 11.5, 1.05, 0.0],
+		[0.515, -1.0, 12.0, 1.00, 180.0],
+		[0.805, 1.0, 10.5, 1.08, 0.0]
 	]:
-		_spawn_safe_trackside_asset(root, "light_mast", float(data[0]), float(data[1]), 5.0, 0.92, 0.0)
+		_spawn_safe_trackside_asset(
+			root, "grandstand", float(data[0]), float(data[1]),
+			float(data[2]), float(data[3]), float(data[4])
+		)
 
-	# Trees are distributed relative to the current Curve3D, never by fixed world coordinates.
-	for i in range(20):
-		var ratio := fposmod(0.015 + float(i) / 20.0, 1.0)
+	# A denser but still LOD-controlled forest makes the 2.8 km environment feel
+	# occupied without placing geometry close to the racing surface.
+	for i in range(48):
+		var ratio := fposmod(0.012 + float(i) / 48.0, 1.0)
 		var side := -1.0 if i % 2 == 0 else 1.0
-		var extra := 7.0 + float(i % 4) * 2.4
-		_spawn_safe_trackside_asset(root, "tree_lush", ratio, side, extra, 0.82 + float(i % 3) * 0.12, float(i * 31))
+		var extra := 11.0 + float((i * 7) % 6) * 2.2
+		var scale_value := 0.78 + float(i % 5) * 0.10
+		_spawn_safe_trackside_asset(root, "tree_lush", ratio, side, extra, scale_value, float(i * 37))
 
-	# Small safety props remain outside the barrier, never on the racing surface.
-	_spawn_safe_trackside_asset(root, "tire_stack", 0.34, 1.0, 2.6, 0.9, 0.0)
-	_spawn_safe_trackside_asset(root, "tire_stack", 0.79, -1.0, 2.6, 0.9, 0.0)
+	# Lighting landmarks around the major braking and spectator zones.
+	for data in [
+		[0.015, -1.0], [0.085, 1.0], [0.185, -1.0], [0.285, 1.0],
+		[0.445, 1.0], [0.515, -1.0], [0.585, -1.0], [0.685, 1.0],
+		[0.745, -1.0], [0.805, 1.0], [0.925, 1.0], [0.975, -1.0]
+	]:
+		var mast := _spawn_safe_trackside_asset(root, "light_mast", float(data[0]), float(data[1]), 6.0, 0.95, 0.0)
+		if mast:
+			var flood := OmniLight3D.new()
+			flood.name = "FloodLight"
+			flood.position = Vector3(0.0, 7.5, 0.0)
+			flood.light_color = Color("#fff1d0")
+			flood.light_energy = 1.65
+			flood.omni_range = 28.0
+			flood.shadow_enabled = false
+			mast.add_child(flood)
+
+	# Paddock support area behind the pit buildings.
+	for data in [
+		[0.962, 1.0, 18.0, 1.0, 90.0],
+		[0.978, 1.0, 19.5, 0.95, 90.0],
+		[0.994, 1.0, 18.0, 1.0, 90.0]
+	]:
+		_spawn_safe_trackside_asset(
+			root, "paddock_tent", float(data[0]), float(data[1]),
+			float(data[2]), float(data[3]), float(data[4])
+		)
+	_spawn_safe_trackside_asset(root, "service_van", 0.972, 1.0, 23.0, 0.92, 90.0)
+	_spawn_safe_trackside_asset(root, "service_van", 0.988, 1.0, 24.5, 0.92, 90.0)
+
+func _trackside_anchor(ratio: float, side: float, clearance: float, use_track_height: bool = false) -> Dictionary:
+	if track == null:
+		return {"valid": false}
+
+	var wrapped := fposmod(ratio, 1.0)
+	var frame := track.get_world_transform_at_ratio(wrapped)
+	var offset := track.get_barrier_offset(side, wrapped) + clearance
+	if track.trackside_offset_conflicts(wrapped, side, offset):
+		return {"valid": false}
+
+	var origin := frame.origin + frame.basis.x * side * offset
+	origin.y = frame.origin.y if use_track_height else TerrainBuilder3D.height_at(origin.x, origin.z)
+	var forward := -frame.basis.z.normalized()
+	var yaw := atan2(forward.x, forward.z)
+	return {
+		"valid": true,
+		"transform": Transform3D(Basis(Vector3.UP, yaw), origin)
+	}
+
+func _make_trackside_material(
+	color: Color,
+	roughness: float = 0.72,
+	metallic: float = 0.0,
+	emission: Color = Color(0, 0, 0, 1)
+) -> StandardMaterial3D:
+	var material := StandardMaterial3D.new()
+	material.albedo_color = color
+	material.roughness = roughness
+	material.metallic = metallic
+	if emission.r + emission.g + emission.b > 0.001:
+		material.emission_enabled = true
+		material.emission = emission
+		material.emission_energy_multiplier = 1.6
+	return material
+
+func _add_trackside_box(
+	parent: Node3D,
+	name_value: String,
+	size: Vector3,
+	position_value: Vector3,
+	material: Material
+) -> MeshInstance3D:
+	var node := MeshInstance3D.new()
+	node.name = name_value
+	var mesh := BoxMesh.new()
+	mesh.size = size
+	node.mesh = mesh
+	node.position = position_value
+	node.material_override = material
+	parent.add_child(node)
+	return node
+
+func _create_dual_label(
+	parent: Node3D,
+	text_value: String,
+	position_value: Vector3,
+	font_size_value: int,
+	pixel_size_value: float,
+	color: Color = Color.WHITE,
+	local_yaw_degrees: float = 0.0
+) -> void:
+	for flip in [false, true]:
+		var label := Label3D.new()
+		label.text = text_value
+		label.font_size = font_size_value
+		label.outline_size = maxi(2, int(float(font_size_value) * 0.10))
+		label.modulate = color
+		label.pixel_size = pixel_size_value
+		label.position = position_value + Vector3(0.0, 0.0, 0.07 if not flip else -0.07)
+		label.rotation.y = deg_to_rad(local_yaw_degrees) + (PI if flip else 0.0)
+		parent.add_child(label)
+
+func _build_start_finish_gantry(root: Node3D) -> void:
+	var frame := track.get_world_transform_at_ratio(0.0)
+	var forward := -frame.basis.z.normalized()
+	var yaw := atan2(forward.x, forward.z)
+
+	var gantry := Node3D.new()
+	gantry.name = "StartFinishGantry"
+	gantry.global_transform = Transform3D(Basis(Vector3.UP, yaw), frame.origin)
+	root.add_child(gantry)
+
+	var steel := _make_trackside_material(Color("#d6dadd"), 0.34, 0.62)
+	var dark := _make_trackside_material(Color("#171b20"), 0.48, 0.22)
+	var red := _make_trackside_material(Color("#e33b45"), 0.40, 0.12, Color("#5a070a"))
+	var left_post_x := -(track.get_barrier_offset(-1.0, 0.0) + 0.9)
+	var right_post_x := track.get_barrier_offset(1.0, 0.0) + 0.9
+	var center_x := (left_post_x + right_post_x) * 0.5
+	var span := right_post_x - left_post_x
+
+	_add_trackside_box(gantry, "PostL", Vector3(0.30, 5.8, 0.30), Vector3(left_post_x, 2.9, 0.0), steel)
+	_add_trackside_box(gantry, "PostR", Vector3(0.30, 5.8, 0.30), Vector3(right_post_x, 2.9, 0.0), steel)
+	_add_trackside_box(gantry, "Header", Vector3(span + 0.30, 1.15, 0.45), Vector3(center_x, 5.35, 0.0), dark)
+	_create_dual_label(gantry, "RED BLUE CIRCUIT", Vector3(0.0, 5.36, 0.0), 54, 0.018)
+
+	for i in range(5):
+		_add_trackside_box(
+			gantry, "StartLight%d" % i, Vector3(0.34, 0.34, 0.18),
+			Vector3(-0.82 + float(i) * 0.41, 4.58, -0.24), red
+		)
+
+func _build_pro_pit_complex(root: Node3D) -> void:
+	var pit_root := Node3D.new()
+	pit_root.name = "ProPitComplex"
+	root.add_child(pit_root)
+
+	var concrete := _make_trackside_material(Color("#b9bbb6"), 0.82, 0.02)
+	var graphite := _make_trackside_material(Color("#20252b"), 0.58, 0.18)
+	var accent := _make_trackside_material(Color("#d73c42"), 0.46, 0.10)
+	var glass := _make_trackside_material(Color("#243b49"), 0.18, 0.10)
+
+	for i in range(7):
+		var ratio := fposmod(0.962 + float(i) * 0.0034, 1.0)
+		var anchor := _trackside_anchor(ratio, 1.0, 6.8, true)
+		if not bool(anchor.get("valid", false)):
+			continue
+
+		var garage := Node3D.new()
+		garage.name = "Garage_%02d" % (i + 1)
+		garage.global_transform = anchor.transform
+		garage.add_to_group("safe_trackside_prop")
+		pit_root.add_child(garage)
+
+		_add_trackside_box(garage, "Shell", Vector3(7.2, 3.4, 7.6), Vector3(0.0, 1.7, 0.0), concrete)
+		_add_trackside_box(garage, "Door", Vector3(0.14, 2.35, 5.2), Vector3(-3.66, 1.30, 0.0), graphite)
+		_add_trackside_box(garage, "Fascia", Vector3(0.22, 0.62, 7.35), Vector3(-3.72, 3.00, 0.0), accent)
+		_add_trackside_box(garage, "Window", Vector3(0.12, 0.72, 2.1), Vector3(-3.75, 2.25, 2.1), glass)
+		_add_trackside_box(garage, "Roof", Vector3(7.55, 0.24, 7.95), Vector3(0.0, 3.52, 0.0), graphite)
+		_create_dual_label(garage, "PIT %02d" % (i + 1), Vector3(-3.82, 3.00, 0.0), 36, 0.015, Color.WHITE, 90.0)
+
+	# Race-control tower anchors the start/finish complex.
+	var tower_anchor := _trackside_anchor(0.992, -1.0, 14.0, true)
+	if bool(tower_anchor.get("valid", false)):
+		var tower := Node3D.new()
+		tower.name = "RaceControl"
+		tower.global_transform = tower_anchor.transform
+		tower.add_to_group("safe_trackside_prop")
+		pit_root.add_child(tower)
+		_add_trackside_box(tower, "Base", Vector3(6.5, 5.6, 7.0), Vector3(0.0, 2.8, 0.0), graphite)
+		_add_trackside_box(tower, "GlassBand", Vector3(6.7, 1.25, 7.2), Vector3(0.0, 4.35, 0.0), glass)
+		_add_trackside_box(tower, "Roof", Vector3(7.4, 0.35, 7.8), Vector3(0.0, 5.78, 0.0), accent)
+		_create_dual_label(tower, "RACE CONTROL", Vector3(0.0, 4.42, -3.68), 34, 0.015)
+
+func _create_brake_marker(
+	root: Node3D,
+	ratio: float,
+	side: float,
+	text_value: String
+) -> void:
+	var anchor := _trackside_anchor(ratio, side, 1.8, false)
+	if not bool(anchor.get("valid", false)):
+		return
+
+	var marker := Node3D.new()
+	marker.name = "Brake_%s" % text_value
+	marker.global_transform = anchor.transform
+	marker.add_to_group("safe_trackside_prop")
+	root.add_child(marker)
+
+	var white := _make_trackside_material(Color("#f3f1ea"), 0.70, 0.02)
+	var dark := _make_trackside_material(Color("#24272a"), 0.74, 0.0)
+	_add_trackside_box(marker, "Post", Vector3(0.12, 1.25, 0.12), Vector3(0.0, 0.62, 0.0), dark)
+	_add_trackside_box(marker, "Board", Vector3(1.20, 1.35, 0.10), Vector3(0.0, 1.55, 0.0), white)
+	_create_dual_label(marker, text_value, Vector3(0.0, 1.56, 0.0), 46, 0.020, Color("#16191b"))
+
+func _build_braking_markers(root: Node3D) -> void:
+	var brake_root := Node3D.new()
+	brake_root.name = "BrakeMarkers"
+	root.add_child(brake_root)
+	var length := track.get_length()
+	var corners := [0.088, 0.449, 0.575, 0.747, 0.807, 0.933]
+
+	for corner_ratio in corners:
+		var signed_curve := track._signed_curvature_at_distance(float(corner_ratio) * length)
+		var outside_side := 1.0 if signed_curve >= 0.0 else -1.0
+		for distance_m in [150.0, 100.0, 50.0]:
+			var ratio := fposmod(float(corner_ratio) - distance_m / length, 1.0)
+			_create_brake_marker(brake_root, ratio, outside_side, str(int(distance_m)))
+
+func _create_sponsor_board(
+	root: Node3D,
+	ratio: float,
+	side: float,
+	text_value: String,
+	color: Color
+) -> void:
+	var anchor := _trackside_anchor(ratio, side, 3.0, false)
+	if not bool(anchor.get("valid", false)):
+		return
+	var board := Node3D.new()
+	board.name = "Sponsor_" + text_value.replace(" ", "_")
+	board.global_transform = anchor.transform
+	board.add_to_group("safe_trackside_prop")
+	root.add_child(board)
+
+	var panel := _make_trackside_material(color, 0.54, 0.05)
+	var steel := _make_trackside_material(Color("#bfc5c8"), 0.42, 0.55)
+	_add_trackside_box(board, "Panel", Vector3(5.6, 1.55, 0.12), Vector3(0.0, 1.75, 0.0), panel)
+	_add_trackside_box(board, "PostL", Vector3(0.10, 1.55, 0.10), Vector3(-2.3, 0.78, 0.0), steel)
+	_add_trackside_box(board, "PostR", Vector3(0.10, 1.55, 0.10), Vector3(2.3, 0.78, 0.0), steel)
+	_create_dual_label(board, text_value, Vector3(0.0, 1.76, 0.0), 42, 0.015)
+
+func _build_sponsor_boards(root: Node3D) -> void:
+	var board_root := Node3D.new()
+	board_root.name = "SponsorBoards"
+	root.add_child(board_root)
+	var entries := [
+		[0.165, -1.0, "HERMES RACING", Color("#20252d")],
+		[0.205, -1.0, "RED BLUE", Color("#c92f3b")],
+		[0.305, 1.0, "APEX", Color("#245fa9")],
+		[0.355, 1.0, "MOTORSPORT", Color("#20252d")],
+		[0.525, -1.0, "RACE LAB", Color("#c92f3b")],
+		[0.615, 1.0, "HERMES", Color("#245fa9")],
+		[0.695, 1.0, "RED BLUE", Color("#20252d")],
+		[0.825, -1.0, "APEX", Color("#c92f3b")]
+	]
+	for data in entries:
+		_create_sponsor_board(
+			board_root, float(data[0]), float(data[1]), String(data[2]), data[3]
+		)
+
+func _build_corner_safety_props(root: Node3D) -> void:
+	var safety_root := Node3D.new()
+	safety_root.name = "CornerSafety"
+	root.add_child(safety_root)
+	var length := track.get_length()
+	var corners := [0.088, 0.449, 0.575, 0.747, 0.807, 0.933]
+
+	for corner_index in range(corners.size()):
+		var ratio := float(corners[corner_index])
+		var signed_curve := track._signed_curvature_at_distance(ratio * length)
+		var outside_side := 1.0 if signed_curve >= 0.0 else -1.0
+		for j in range(3):
+			var stack_ratio := fposmod(ratio + (float(j) - 1.0) * 0.0022, 1.0)
+			_spawn_safe_trackside_asset(
+				safety_root, "tire_stack", stack_ratio, outside_side,
+				1.4 + float(j) * 0.25, 0.92 + float(j) * 0.04, float(j * 18)
+		)
+		# Cones mark the service-side edge near the highest-speed braking zones.
+		if corner_index in [0, 1, 5]:
+			for j in range(4):
+				_spawn_safe_trackside_asset(
+					safety_root, "track_cone",
+					fposmod(ratio - 0.010 + float(j) * 0.0017, 1.0),
+					-outside_side, 1.2, 0.82, 0.0
+				)
 
 func _build_scenery() -> void:
 	var tree_positions := [
