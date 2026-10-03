@@ -1,10 +1,14 @@
 class_name ArcadeCarController3D
 extends CharacterBody3D
 
+# ---------------------------------------------------------------------------
+# Driver / legacy tuning surface
+# ---------------------------------------------------------------------------
+
 @export var input_enabled: bool = true
 @export var body_color: Color = Color("#ef3f51")
-@export var top_speed: float = 34.0
-@export var reverse_speed: float = 10.0
+@export var top_speed: float = 48.0
+@export var reverse_speed: float = 11.0
 @export var acceleration: float = 25.0
 @export var brake_force: float = 38.0
 @export var rolling_drag: float = 8.0
@@ -14,15 +18,84 @@ extends CharacterBody3D
 @export var turbo_force: float = 16.0
 @export var ride_height: float = 0.48
 
+# ---------------------------------------------------------------------------
+# Chassis / tire model
+# ---------------------------------------------------------------------------
+
+@export_group("Vehicle Dynamics")
+@export var vehicle_mass: float = 1160.0
+@export var yaw_inertia: float = 2050.0
+@export var wheelbase: float = 2.62
+@export var cg_to_front: float = 1.18
+@export var cg_height: float = 0.48
+@export var tire_mu: float = 1.18
+@export var front_cornering_stiffness: float = 82000.0
+@export var rear_cornering_stiffness: float = 80000.0
+@export var max_steer_low_speed_deg: float = 29.0
+@export var max_steer_high_speed_deg: float = 8.5
+@export var aero_drag_coefficient_area: float = 0.72
+@export var rolling_resistance_coefficient: float = 0.016
+@export var stability_assist: float = 0.24
+@export var max_controlled_slip_deg: float = 30.0
+@export var spin_recovery_strength: float = 12.0
+@export var surface_grip_offroad: float = 0.58
+
+# ---------------------------------------------------------------------------
+# Engine / transmission
+# ---------------------------------------------------------------------------
+
+@export_group("Powertrain")
+@export var idle_rpm: float = 1050.0
+@export var redline_rpm: float = 7600.0
+@export var upshift_rpm_full_throttle: float = 7050.0
+@export var upshift_rpm_light_throttle: float = 6250.0
+@export var downshift_rpm: float = 2850.0
+@export var max_engine_torque_nm: float = 335.0
+@export var final_drive: float = 4.10
+@export var driveline_efficiency: float = 0.90
+@export var wheel_radius: float = 0.31
+@export var reverse_ratio: float = 3.20
+@export var gear_ratios: Array[float] = [3.20, 2.25, 1.70, 1.35, 1.10]
+@export var upshift_times: Array[float] = [0.24, 0.20, 0.18, 0.17]
+@export var downshift_time: float = 0.18
+
+# ---------------------------------------------------------------------------
+# Consumables
+# ---------------------------------------------------------------------------
+
+@export_group("Race Systems")
 @export var fuel_capacity_liters: float = 42.0
 @export var fuel_burn_per_second: float = 0.035
 @export var tire_wear_rate: float = 0.00032
 @export var pit_service_rate: float = 0.55
 
+# ---------------------------------------------------------------------------
+# Public runtime state
+# ---------------------------------------------------------------------------
+
 var track: TrackSpline
+
 var speed_kmh: float = 0.0
+var signed_speed_kmh: float = 0.0
 var is_offroad: bool = false
 var slip_amount: float = 0.0
+var drift_intensity: float = 0.0
+var vehicle_slip_angle_deg: float = 0.0
+var front_slip_angle_deg: float = 0.0
+var rear_slip_angle_deg: float = 0.0
+var lateral_accel_g: float = 0.0
+var longitudinal_accel_g: float = 0.0
+var front_tire_saturation: float = 0.0
+var rear_tire_saturation: float = 0.0
+
+var engine_rpm: float = 1050.0
+var current_gear: int = 1
+var pending_gear: int = 1
+var is_shifting: bool = false
+var throttle_input: float = 0.0
+var brake_input: float = 0.0
+var steering_input: float = 0.0
+var steering_angle_deg: float = 0.0
 
 var fuel_liters: float = 42.0
 var tire_health: float = 1.0
@@ -30,9 +103,30 @@ var damage: float = 0.0
 var in_pit_lane: bool = false
 var pit_servicing: bool = false
 var replay_mode: bool = false
+
 var autopilot_enabled: bool = false
-var autopilot_target_speed: float = 28.0
+var autopilot_target_speed: float = 27.0
 var autopilot_lookahead: float = 0.018
+var autopilot_recoveries: int = 0
+
+# ---------------------------------------------------------------------------
+# Dynamic state in the car body frame
+# longitudinal_speed: +forward, lateral_speed_body: +right, yaw_rate: +right turn
+# ---------------------------------------------------------------------------
+
+var longitudinal_speed: float = 0.0
+var lateral_speed_body: float = 0.0
+var yaw_rate: float = 0.0
+var longitudinal_accel: float = 0.0
+var lateral_accel: float = 0.0
+
+var _previous_longitudinal_speed: float = 0.0
+var _shift_timer: float = 0.0
+var _shift_total_time: float = 0.0
+var _shift_committed: bool = false
+var _shift_kick: float = 0.0
+var _stationary_reverse_hold: float = 0.0
+var _autopilot_stuck_time: float = 0.0
 
 var _visual: Node3D
 var _wheel_nodes: Array[Node3D] = []
@@ -46,12 +140,14 @@ var _skid_timer: float = 0.0
 var _smoke_timer: float = 0.0
 var _engine_audio: EngineAudio3D
 var _fx_audio: VehicleFxAudio3D
-var _last_steer_input: float = 0.0
-var _base_forward_speed: float = 0.0
+
+const AIR_DENSITY := 1.225
+const GRAVITY_ACCEL := 9.81
 
 func _ready() -> void:
 	motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
 	fuel_liters = fuel_capacity_liters
+	engine_rpm = idle_rpm
 	_build_collision()
 	_build_visual()
 	_build_effects()
@@ -65,129 +161,487 @@ func _physics_process(delta: float) -> void:
 		return
 
 	var throttle := Input.get_action_strength("accelerate")
-	var reverse_input := Input.get_action_strength("brake_reverse")
-	var steer_input := Input.get_axis("steer_left", "steer_right")
+	var brake_reverse := Input.get_action_strength("brake_reverse")
+	var steer := Input.get_axis("steer_left", "steer_right")
 	var boost := Input.is_action_pressed("boost")
 	var pit_requested := Input.is_action_pressed("pit_service")
 
 	if autopilot_enabled:
 		var controls := _autopilot_controls()
 		throttle = float(controls.throttle)
-		reverse_input = float(controls.brake)
-		steer_input = float(controls.steer)
+		brake_reverse = float(controls.brake)
+		steer = float(controls.steer)
 		boost = bool(controls.boost)
 		pit_requested = false
 
-	_last_steer_input = steer_input
-
-	var forward := -global_transform.basis.z.normalized()
-	var right := global_transform.basis.x.normalized()
-	var forward_speed := velocity.dot(forward)
-	var lateral_speed := velocity.dot(right)
-	_base_forward_speed = forward_speed
+	throttle_input = clampf(throttle, 0.0, 1.0)
+	brake_input = clampf(brake_reverse, 0.0, 1.0)
+	steering_input = clampf(steer, -1.0, 1.0)
 
 	in_pit_lane = track != null and track.is_in_pit_zone(global_position)
+	is_offroad = track != null and not track.is_on_track(global_position, -0.20)
 
-	var fuel_factor := 1.0 if fuel_liters > 0.01 else 0.0
+	_update_transmission(delta, not autopilot_enabled)
+	_step_vehicle_dynamics(delta, boost)
+	_apply_world_motion(delta)
+	_update_surface_height()
+	_update_race_state(delta, pit_requested, boost)
+
+	if autopilot_enabled and _update_autopilot_recovery(delta):
+		return
+
+func _step_vehicle_dynamics(delta: float, boost: bool) -> void:
+	var speed_abs := absf(longitudinal_speed)
+	var direction_sign := 1.0 if longitudinal_speed >= -0.05 else -1.0
+
 	var damage_factor := lerpf(1.0, 0.72, clampf(damage, 0.0, 1.0))
-	var tire_grip_factor := lerpf(0.62, 1.0, clampf(tire_health, 0.0, 1.0))
+	var wear_grip := lerpf(0.66, 1.0, clampf(tire_health, 0.0, 1.0))
+	var grip_scale := pow(maxf(0.25, lateral_grip / 14.0), 0.34)
+	var surface_mu := tire_mu * wear_grip * grip_scale
+	if is_offroad:
+		surface_mu *= surface_grip_offroad
 
-	if throttle > 0.01 and fuel_factor > 0.0:
-		var target_speed := top_speed * damage_factor * (1.14 if boost else 1.0)
-		forward_speed = move_toward(forward_speed, target_speed, acceleration * throttle * damage_factor * delta)
-	elif reverse_input > 0.01:
-		if forward_speed > 1.0:
-			forward_speed = move_toward(forward_speed, 0.0, brake_force * reverse_input * delta)
-		else:
-			forward_speed = move_toward(forward_speed, -reverse_speed, acceleration * 0.55 * reverse_input * delta)
-	else:
-		forward_speed = move_toward(forward_speed, 0.0, rolling_drag * delta)
+	var normalized_speed := clampf(speed_abs / maxf(1.0, top_speed), 0.0, 1.0)
+	var max_steer := deg_to_rad(lerpf(max_steer_low_speed_deg, max_steer_high_speed_deg, pow(normalized_speed, 0.55)))
+	var steer_target := steering_input * max_steer
+	var steering_response := steering_rate * 3.25
+	var steering_angle := deg_to_rad(steering_angle_deg)
+	steering_angle = move_toward(steering_angle, steer_target, steering_response * delta)
+	steering_angle_deg = rad_to_deg(steering_angle)
 
-	var steer_factor: float = clampf(absf(forward_speed) / maxf(1.0, top_speed), 0.12, 1.0)
-	if absf(forward_speed) > 0.4 and absf(steer_input) > 0.01:
-		rotate_y(-steer_input * steering_rate * tire_grip_factor * steer_factor * signf(forward_speed) * delta)
+	# Reverse is intentionally more stable and kinematic at low speed.
+	# It also handles the launch from standstill after R is engaged.
+	if current_gear == -1 and brake_input > 0.01 and longitudinal_speed <= 0.25:
+		_step_reverse_dynamics(delta, steering_angle, surface_mu)
+		return
+	if longitudinal_speed < -0.15:
+		_step_reverse_dynamics(delta, steering_angle, surface_mu)
+		return
 
-	forward = -global_transform.basis.z.normalized()
-	right = global_transform.basis.x.normalized()
-	lateral_speed = velocity.dot(right)
+	var rear_distance := maxf(0.1, wheelbase - cg_to_front)
+	var speed_for_slip := maxf(2.2, speed_abs)
 
-	slip_amount = clampf(absf(lateral_speed) / maxf(2.0, absf(forward_speed)), 0.0, 1.0)
-
-	lateral_speed = move_toward(
-		lateral_speed,
-		0.0,
-		lateral_grip * tire_grip_factor * delta * maxf(1.0, absf(forward_speed) * 0.35)
+	var front_slip := atan2(
+		lateral_speed_body + cg_to_front * yaw_rate,
+		speed_for_slip
+	) - steering_angle
+	var rear_slip := atan2(
+		lateral_speed_body - rear_distance * yaw_rate,
+		speed_for_slip
 	)
 
-	if boost and forward_speed > 2.0 and fuel_factor > 0.0:
-		forward_speed += turbo_force * delta
+	front_slip_angle_deg = rad_to_deg(front_slip)
+	rear_slip_angle_deg = rad_to_deg(rear_slip)
+	vehicle_slip_angle_deg = rad_to_deg(atan2(lateral_speed_body, maxf(1.0, speed_abs)))
 
-	is_offroad = track != null and not track.is_on_track(global_position, -0.25)
+	var static_front_load := vehicle_mass * GRAVITY_ACCEL * rear_distance / wheelbase
+	var static_rear_load := vehicle_mass * GRAVITY_ACCEL * cg_to_front / wheelbase
+
+	var transfer := vehicle_mass * longitudinal_accel * cg_height / wheelbase
+	var front_normal := clampf(static_front_load - transfer, vehicle_mass * GRAVITY_ACCEL * 0.25, vehicle_mass * GRAVITY_ACCEL * 0.72)
+	var rear_normal := vehicle_mass * GRAVITY_ACCEL - front_normal
+
+	var max_front_force := surface_mu * front_normal
+	var max_rear_force := surface_mu * rear_normal
+
+	var raw_front_lateral := -front_cornering_stiffness * front_slip
+	var raw_rear_lateral := -rear_cornering_stiffness * rear_slip
+
+	var drive_force := _drivetrain_force(boost) * damage_factor
+	var brake_force_total := _braking_force()
+	var brake_front := brake_force_total * 0.64
+	var brake_rear := brake_force_total * 0.36
+
+	var longitudinal_front := -signf(maxf(0.01, longitudinal_speed)) * brake_front
+	var longitudinal_rear := drive_force - signf(maxf(0.01, longitudinal_speed)) * brake_rear
+
+	# Friction circle: longitudinal demand consumes part of the available tire force.
+	# RWD drive is limited below 100% utilization so power-oversteer is progressive,
+	# rather than instantly deleting every bit of rear lateral grip.
+	longitudinal_front = clampf(longitudinal_front, -max_front_force * 0.96, max_front_force * 0.96)
+	if drive_force > 0.0 and brake_force_total <= 0.01:
+		longitudinal_rear = clampf(longitudinal_rear, 0.0, max_rear_force * 0.72)
+	else:
+		longitudinal_rear = clampf(longitudinal_rear, -max_rear_force * 0.96, max_rear_force * 0.96)
+
+	var front_lat_limit := sqrt(maxf(0.0, max_front_force * max_front_force - longitudinal_front * longitudinal_front))
+	var rear_lat_limit := sqrt(maxf(0.0, max_rear_force * max_rear_force - longitudinal_rear * longitudinal_rear))
+
+	var front_lateral := 0.0
+	var rear_lateral := 0.0
+	if front_lat_limit > 1.0:
+		front_lateral = -front_lat_limit * tanh(
+			front_cornering_stiffness * front_slip / front_lat_limit
+		)
+	if rear_lat_limit > 1.0:
+		rear_lateral = -rear_lat_limit * tanh(
+			rear_cornering_stiffness * rear_slip / rear_lat_limit
+		)
+
+	# Gentle stability assist keeps sustained drifts controllable without cancelling them.
+	if speed_abs > 9.0 and absf(vehicle_slip_angle_deg) > 5.0:
+		var assist := clampf(stability_assist, 0.0, 0.55)
+		rear_lateral = clampf(
+			rear_lateral - lateral_speed_body * vehicle_mass * assist,
+			-rear_lat_limit,
+			rear_lat_limit
+		)
+
+	var aero_drag := 0.5 * AIR_DENSITY * aero_drag_coefficient_area * longitudinal_speed * absf(longitudinal_speed)
+	var rolling_force := rolling_resistance_coefficient * vehicle_mass * GRAVITY_ACCEL
+	if speed_abs < 0.20:
+		rolling_force *= clampf(speed_abs / 0.20, 0.0, 1.0)
+	var rolling_drag_force := signf(longitudinal_speed) * rolling_force
+
 	if is_offroad:
-		forward_speed = move_toward(forward_speed, 0.0, offroad_drag * delta)
-		forward_speed = clampf(forward_speed, -reverse_speed * 0.55, top_speed * 0.58)
+		rolling_drag_force += signf(longitudinal_speed) * offroad_drag * 95.0
 
-	velocity = forward * forward_speed + right * lateral_speed
+	var force_x := longitudinal_rear + longitudinal_front - aero_drag - rolling_drag_force - front_lateral * sin(steering_angle)
+	var force_y := rear_lateral + front_lateral * cos(steering_angle)
+
+	var accel_x := force_x / vehicle_mass + lateral_speed_body * yaw_rate
+	var accel_y := force_y / vehicle_mass - longitudinal_speed * yaw_rate
+	var yaw_moment := cg_to_front * front_lateral * cos(steering_angle) - rear_distance * rear_lateral
+	var yaw_accel := yaw_moment / maxf(100.0, yaw_inertia)
+
+	# Mild electronic stability control. The requested bicycle-model yaw is
+	# limited by the lateral acceleration the tires can physically generate.
+	if speed_abs > 8.0:
+		var kinematic_yaw := longitudinal_speed / maxf(0.5, wheelbase) * tan(steering_angle)
+		var grip_yaw_limit := surface_mu * GRAVITY_ACCEL / maxf(5.0, speed_abs) * 0.94
+		var desired_yaw_rate := clampf(kinematic_yaw, -grip_yaw_limit, grip_yaw_limit)
+		var esc_strength := stability_assist * smoothstep(3.0, 16.0, absf(vehicle_slip_angle_deg))
+		yaw_accel += (desired_yaw_rate - yaw_rate) * esc_strength * 5.5
+
+		# When yaw exceeds what the current grip can sustain, individual-wheel
+		# braking in a real ESC would create a correcting moment. This models that
+		# moment without adding lateral tire force beyond the friction circle.
+		var drift_yaw_limit := grip_yaw_limit * 1.34 + 0.08
+		if absf(yaw_rate) > drift_yaw_limit:
+			var bounded_yaw := clampf(yaw_rate, -drift_yaw_limit, drift_yaw_limit)
+			yaw_accel += (bounded_yaw - yaw_rate) * 5.2
+
+	_previous_longitudinal_speed = longitudinal_speed
+	longitudinal_speed += accel_x * delta
+	lateral_speed_body += accel_y * delta
+	yaw_rate += yaw_accel * delta
+
+	# Final ESC envelope. It still allows a large drift angle, but prevents the
+	# car from rotating faster than the available lateral grip can support.
+	if speed_abs > 5.0:
+		var planar_speed := maxf(
+			5.0,
+			sqrt(longitudinal_speed * longitudinal_speed + lateral_speed_body * lateral_speed_body)
+		)
+		var physical_yaw_cap := surface_mu * GRAVITY_ACCEL / planar_speed * 1.48 + 0.10
+		physical_yaw_cap = minf(physical_yaw_cap, deg_to_rad(65.0))
+		yaw_rate = clampf(yaw_rate, -physical_yaw_cap, physical_yaw_cap)
+
+		var max_lateral_speed := tan(deg_to_rad(max_controlled_slip_deg)) * maxf(5.0, absf(longitudinal_speed))
+		if absf(lateral_speed_body) > max_lateral_speed:
+			var target_lateral := signf(lateral_speed_body) * max_lateral_speed
+			lateral_speed_body = lerpf(
+				lateral_speed_body,
+				target_lateral,
+				1.0 - exp(-spin_recovery_strength * delta)
+			)
+
+	# Aerodynamic / chassis yaw damping grows with speed.
+	var physical_slip_damping := smoothstep(4.0, 20.0, absf(vehicle_slip_angle_deg))
+	var yaw_damping := 0.48 + speed_abs * 0.014 + physical_slip_damping * 0.30
+	yaw_rate = move_toward(yaw_rate, 0.0, yaw_damping * delta)
+
+	if throttle_input <= 0.01 and brake_input <= 0.01 and speed_abs < 1.1:
+		longitudinal_speed = move_toward(longitudinal_speed, 0.0, 1.4 * delta)
+		lateral_speed_body = move_toward(lateral_speed_body, 0.0, 2.8 * delta)
+		yaw_rate = move_toward(yaw_rate, 0.0, 1.2 * delta)
+
+	longitudinal_speed = clampf(longitudinal_speed, -reverse_speed, top_speed * (1.08 if boost else 1.0))
+	lateral_speed_body = clampf(lateral_speed_body, -18.0, 18.0)
+	yaw_rate = clampf(yaw_rate, -2.8, 2.8)
+
+	longitudinal_accel = accel_x
+	lateral_accel = accel_y
+	longitudinal_accel_g = accel_x / GRAVITY_ACCEL
+	lateral_accel_g = accel_y / GRAVITY_ACCEL
+	vehicle_slip_angle_deg = rad_to_deg(
+		atan2(lateral_speed_body, maxf(1.0, absf(longitudinal_speed)))
+	)
+
+	front_tire_saturation = absf(raw_front_lateral) / maxf(1.0, max_front_force)
+	rear_tire_saturation = absf(raw_rear_lateral) / maxf(1.0, max_rear_force)
+
+	var slip_angle_rad := absf(atan2(lateral_speed_body, maxf(1.0, absf(longitudinal_speed))))
+	var slip_component := smoothstep(0.060, 0.30, slip_angle_rad)
+	var rear_breakaway := smoothstep(0.90, 1.45, rear_tire_saturation)
+	var speed_component := smoothstep(7.0, 19.0, speed_abs)
+	drift_intensity = clampf(maxf(slip_component, rear_breakaway * 0.68) * speed_component, 0.0, 1.0)
+	slip_amount = clampf(absf(vehicle_slip_angle_deg) / 28.0, 0.0, 1.0)
+
+func _step_reverse_dynamics(delta: float, steering_angle: float, surface_mu: float) -> void:
+	var fuel_factor := 1.0 if fuel_liters > 0.01 else 0.0
+	var reverse_throttle := brake_input if current_gear == -1 else 0.0
+
+	var reverse_drive := max_engine_torque_nm * reverse_ratio * final_drive * driveline_efficiency / wheel_radius
+	reverse_drive *= reverse_throttle * fuel_factor * (acceleration / 25.0)
+	if is_shifting:
+		reverse_drive *= _shift_torque_factor()
+
+	var braking := 0.0
+	if throttle_input > 0.01:
+		braking = throttle_input * _max_brake_force_newtons()
+
+	var rolling := rolling_resistance_coefficient * vehicle_mass * GRAVITY_ACCEL
+	var net_force := -reverse_drive + braking + rolling
+	var accel_x := net_force / vehicle_mass
+	longitudinal_speed += accel_x * delta
+	longitudinal_speed = clampf(longitudinal_speed, -reverse_speed, 0.0)
+
+	var target_yaw := -longitudinal_speed / maxf(0.5, wheelbase) * tan(steering_angle)
+	yaw_rate = lerpf(yaw_rate, target_yaw, 1.0 - exp(-5.5 * surface_mu * delta))
+	lateral_speed_body = move_toward(lateral_speed_body, 0.0, 8.0 * surface_mu * delta)
+
+	longitudinal_accel = accel_x
+	lateral_accel = 0.0
+	longitudinal_accel_g = accel_x / GRAVITY_ACCEL
+	lateral_accel_g = 0.0
+	drift_intensity = 0.0
+	slip_amount = 0.0
+	front_slip_angle_deg = 0.0
+	rear_slip_angle_deg = 0.0
+	vehicle_slip_angle_deg = 0.0
+
+func _drivetrain_force(boost: bool) -> float:
+	if current_gear <= 0 or is_shifting and not _shift_committed:
+		return 0.0
+	if fuel_liters <= 0.01:
+		return 0.0
+
+	var ratio := _gear_ratio(current_gear)
+	if ratio <= 0.0:
+		return 0.0
+
+	var torque := _engine_torque_nm(engine_rpm)
+	torque *= throttle_input
+	torque *= acceleration / 25.0
+	torque *= _shift_torque_factor()
+
+	if boost and longitudinal_speed > 4.0:
+		torque *= 1.0 + clampf(turbo_force / 100.0, 0.0, 0.25)
+
+	return torque * ratio * final_drive * driveline_efficiency / maxf(0.05, wheel_radius)
+
+func _engine_torque_nm(rpm: float) -> float:
+	var normalized := clampf((rpm - idle_rpm) / maxf(1.0, redline_rpm - idle_rpm), 0.0, 1.0)
+	# Broad naturally-aspirated style curve: builds through midrange, softens near redline.
+	var curve := 0.64 + 0.42 * sin(pow(normalized, 0.82) * PI * 0.92)
+	curve -= smoothstep(0.88, 1.0, normalized) * 0.18
+	return max_engine_torque_nm * clampf(curve, 0.48, 1.02)
+
+func _braking_force() -> float:
+	if brake_input <= 0.01:
+		return 0.0
+	if longitudinal_speed <= 0.65:
+		return 0.0
+	return brake_input * _max_brake_force_newtons()
+
+func _max_brake_force_newtons() -> float:
+	return 14500.0 * clampf(brake_force / 38.0, 0.45, 1.65)
+
+func _update_transmission(delta: float, allow_reverse: bool) -> void:
+	_shift_kick = move_toward(_shift_kick, 0.0, delta * 5.0)
+
+	if is_shifting:
+		_shift_timer = maxf(0.0, _shift_timer - delta)
+		var commit_at := _shift_total_time * 0.48
+		if not _shift_committed and _shift_timer <= commit_at:
+			current_gear = pending_gear
+			_shift_committed = true
+			engine_rpm = _rpm_for_speed(longitudinal_speed, current_gear)
+
+		if _shift_timer <= 0.0:
+			is_shifting = false
+			_shift_committed = true
+		return
+
+	_update_engine_rpm(delta)
+
+	if allow_reverse and brake_input > 0.08 and absf(longitudinal_speed) < 0.45:
+		_stationary_reverse_hold += delta
+	else:
+		_stationary_reverse_hold = 0.0
+
+	if allow_reverse and _stationary_reverse_hold >= 0.10 and current_gear != -1 and not is_shifting:
+		_begin_shift(-1)
+		return
+
+	if throttle_input > 0.08 and longitudinal_speed >= -0.45 and current_gear <= 0 and not is_shifting:
+		_begin_shift(1)
+		return
+
+	if current_gear <= 0 or is_shifting:
+		return
+
+	var throttle_shift_target := lerpf(upshift_rpm_light_throttle, upshift_rpm_full_throttle, throttle_input)
+	if engine_rpm >= throttle_shift_target and current_gear < gear_ratios.size():
+		_begin_shift(current_gear + 1)
+		return
+
+	if current_gear > 1 and engine_rpm <= downshift_rpm:
+		var lower_rpm := _rpm_for_speed(longitudinal_speed, current_gear - 1)
+		if lower_rpm < redline_rpm * 0.91:
+			_begin_shift(current_gear - 1)
+
+func _begin_shift(new_gear: int) -> void:
+	if is_shifting or new_gear == current_gear:
+		return
+	pending_gear = clampi(new_gear, -1, gear_ratios.size())
+
+	if current_gear > 0 and pending_gear > current_gear:
+		var index := clampi(current_gear - 1, 0, upshift_times.size() - 1)
+		_shift_total_time = upshift_times[index] if not upshift_times.is_empty() else 0.20
+	else:
+		_shift_total_time = downshift_time
+
+	if pending_gear == -1 or current_gear == -1:
+		_shift_total_time = maxf(_shift_total_time, 0.22)
+
+	_shift_timer = _shift_total_time
+	_shift_committed = false
+	is_shifting = true
+	_shift_kick = 1.0
+
+func _shift_torque_factor() -> float:
+	if not is_shifting:
+		return 1.0
+	if _shift_total_time <= 0.001:
+		return 1.0
+	var progress := 1.0 - _shift_timer / _shift_total_time
+	if progress < 0.42:
+		return lerpf(1.0, 0.06, progress / 0.42)
+	if progress < 0.68:
+		return 0.06
+	return lerpf(0.06, 1.0, (progress - 0.68) / 0.32)
+
+func _update_engine_rpm(delta: float) -> void:
+	var target := _rpm_for_speed(longitudinal_speed, current_gear)
+	if absf(longitudinal_speed) < 1.0 and throttle_input > 0.02 and current_gear > 0:
+		target = maxf(target, idle_rpm + throttle_input * 1200.0)
+
+	var response := 13.0 if not is_shifting else 8.0
+	engine_rpm = lerpf(engine_rpm, target, 1.0 - exp(-response * delta))
+	engine_rpm = clampf(engine_rpm, idle_rpm, redline_rpm + 150.0)
+
+func _rpm_for_speed(speed_mps: float, gear: int) -> float:
+	if gear == 0:
+		return idle_rpm
+	var ratio := _gear_ratio(gear)
+	if ratio <= 0.0:
+		return idle_rpm
+	var wheel_rpm := absf(speed_mps) / maxf(0.05, TAU * wheel_radius) * 60.0
+	return maxf(idle_rpm, wheel_rpm * ratio * final_drive)
+
+func _gear_ratio(gear: int) -> float:
+	if gear == -1:
+		return reverse_ratio
+	if gear <= 0 or gear > gear_ratios.size():
+		return 0.0
+	return gear_ratios[gear - 1]
+
+func gear_display() -> String:
+	if current_gear < 0:
+		return "R"
+	if current_gear == 0:
+		return "N"
+	return str(current_gear)
+
+func reset_transmission() -> void:
+	current_gear = 1
+	pending_gear = 1
+	engine_rpm = idle_rpm
+	is_shifting = false
+	_shift_timer = 0.0
+	_shift_total_time = 0.0
+	_shift_committed = true
+	_shift_kick = 0.0
+	_stationary_reverse_hold = 0.0
+
+func reset_dynamics() -> void:
+	velocity = Vector3.ZERO
+	longitudinal_speed = 0.0
+	lateral_speed_body = 0.0
+	yaw_rate = 0.0
+	longitudinal_accel = 0.0
+	lateral_accel = 0.0
+	longitudinal_accel_g = 0.0
+	lateral_accel_g = 0.0
+	speed_kmh = 0.0
+	signed_speed_kmh = 0.0
+	slip_amount = 0.0
+	drift_intensity = 0.0
+	vehicle_slip_angle_deg = 0.0
+	front_slip_angle_deg = 0.0
+	rear_slip_angle_deg = 0.0
+	front_tire_saturation = 0.0
+	rear_tire_saturation = 0.0
+	steering_angle_deg = 0.0
+	_autopilot_stuck_time = 0.0
+	reset_transmission()
+
+func _apply_world_motion(delta: float) -> void:
+	var forward := -global_transform.basis.z.normalized()
+	var right := global_transform.basis.x.normalized()
+
+	rotate_y(-yaw_rate * delta)
+	forward = -global_transform.basis.z.normalized()
+	right = global_transform.basis.x.normalized()
+
+	velocity = forward * longitudinal_speed + right * lateral_speed_body
 	velocity.y = 0.0
-
 	move_and_slide()
 	_apply_collision_damage()
 
+	# Recover body-frame state after collision response.
+	forward = -global_transform.basis.z.normalized()
+	right = global_transform.basis.x.normalized()
+	longitudinal_speed = velocity.dot(forward)
+	lateral_speed_body = velocity.dot(right)
+
+	signed_speed_kmh = longitudinal_speed * 3.6
+	speed_kmh = absf(signed_speed_kmh)
+
+func _update_surface_height() -> void:
 	var surface_height := TerrainBuilder3D.height_at(global_position.x, global_position.z)
 	if track != null and track.is_on_track(global_position, 1.8):
 		surface_height = track.get_surface_height(global_position)
 	global_position.y = surface_height + ride_height
 	rotation.x = 0.0
 	rotation.z = 0.0
-	speed_kmh = absf(forward_speed) * 3.6
 
-	_update_resources(delta, throttle, boost)
+func _update_race_state(delta: float, pit_requested: bool, boost: bool) -> void:
+	_update_resources(delta, throttle_input, boost)
 	_update_pit_service(delta, pit_requested)
-	_update_visuals(delta, steer_input, forward_speed)
-	_update_effects(delta, forward_speed)
-
-func telemetry() -> Dictionary:
-	return {
-		"speed_kmh": snappedf(speed_kmh, 0.1),
-		"slip": snappedf(slip_amount, 0.001),
-		"fuel_liters": snappedf(fuel_liters, 0.01),
-		"fuel_percent": snappedf((fuel_liters / maxf(0.001, fuel_capacity_liters)) * 100.0, 0.1),
-		"tire_health": snappedf(tire_health, 0.001),
-		"tire_percent": snappedf(tire_health * 100.0, 0.1),
-		"damage": snappedf(damage, 0.001),
-		"damage_percent": snappedf(damage * 100.0, 0.1),
-		"offroad": is_offroad,
-		"in_pit_lane": in_pit_lane,
-		"pit_servicing": pit_servicing,
-		"position": {
-			"x": snappedf(global_position.x, 0.01),
-			"y": snappedf(global_position.y, 0.01),
-			"z": snappedf(global_position.z, 0.01)
-		},
-		"tuning": {
-			"top_speed": top_speed,
-			"acceleration": acceleration,
-			"brake_force": brake_force,
-			"lateral_grip": lateral_grip,
-			"steering_rate": steering_rate,
-			"turbo_force": turbo_force
-		}
-	}
+	_update_visuals(delta)
+	_update_effects(delta)
 
 func _update_resources(delta: float, throttle: float, boost: bool) -> void:
 	if fuel_liters > 0.0 and throttle > 0.01:
-		var burn := fuel_burn_per_second * throttle * (1.65 if boost else 1.0)
+		var rpm_load := clampf(engine_rpm / maxf(1.0, redline_rpm), 0.2, 1.1)
+		var burn := fuel_burn_per_second * throttle * lerpf(0.75, 1.35, rpm_load)
+		burn *= 1.35 if boost else 1.0
 		fuel_liters = maxf(0.0, fuel_liters - burn * delta)
 
 	if speed_kmh > 8.0:
-		var wear_load := 0.12 + slip_amount * 3.5 + (1.5 if is_offroad else 0.0)
-		tire_health = maxf(0.0, tire_health - tire_wear_rate * wear_load * delta * maxf(0.35, speed_kmh / 65.0))
+		var wear_load := 0.10 + drift_intensity * 4.0 + (1.8 if is_offroad else 0.0)
+		tire_health = maxf(
+			0.0,
+			tire_health - tire_wear_rate * wear_load * delta * maxf(0.35, speed_kmh / 80.0)
+		)
 
 func _update_pit_service(delta: float, pit_requested: bool) -> void:
 	pit_servicing = in_pit_lane and pit_requested and speed_kmh < 12.0
 	if not pit_servicing:
 		return
-
 	fuel_liters = minf(fuel_capacity_liters, fuel_liters + fuel_capacity_liters * pit_service_rate * delta)
 	tire_health = minf(1.0, tire_health + pit_service_rate * delta)
 	damage = maxf(0.0, damage - pit_service_rate * 0.45 * delta)
@@ -197,63 +651,73 @@ func _apply_collision_damage() -> void:
 	if count <= 0:
 		return
 
-	var impact_speed := absf(_base_forward_speed)
-	if impact_speed < 4.0:
+	var impact_speed := absf(longitudinal_speed)
+	if impact_speed < 3.5:
 		return
 
-	damage = clampf(damage + minf(0.08, impact_speed * 0.0018), 0.0, 1.0)
-	velocity *= 0.72
+	damage = clampf(damage + minf(0.09, impact_speed * 0.0020), 0.0, 1.0)
+	longitudinal_speed *= 0.48
+	lateral_speed_body *= 0.30
+	yaw_rate *= 0.42
+
 	if _fx_audio:
 		_fx_audio.trigger_impact(clampf(impact_speed / 28.0, 0.15, 1.0))
 	_spawn_sparks(clampf(impact_speed / 24.0, 0.25, 1.0))
 
-func _update_visuals(delta: float, steer_input: float, forward_speed: float) -> void:
+func _update_visuals(delta: float) -> void:
 	if _visual == null:
 		return
 
-	var speed_ratio := clampf(absf(forward_speed) / maxf(1.0, top_speed), 0.0, 1.0)
 	var bank_roll := deg_to_rad(track.get_bank_degrees_at_world(global_position)) if track != null else 0.0
-	var target_roll := bank_roll - steer_input * speed_ratio * 0.075
-	var target_pitch := clampf((_base_forward_speed - forward_speed) * 0.01, -0.035, 0.035)
+	var body_roll := clampf(-lateral_accel_g * 0.045, -0.10, 0.10)
+	var shift_pitch := -_shift_kick * 0.035
+	var accel_pitch := clampf(-longitudinal_accel_g * 0.025, -0.055, 0.055)
+	var target_roll := bank_roll + body_roll
+	var target_pitch := accel_pitch + shift_pitch
 
 	_visual.rotation.z = lerpf(_visual.rotation.z, target_roll, 1.0 - exp(-8.0 * delta))
-	_visual.rotation.x = lerpf(_visual.rotation.x, target_pitch, 1.0 - exp(-8.0 * delta))
+	_visual.rotation.x = lerpf(_visual.rotation.x, target_pitch, 1.0 - exp(-9.5 * delta))
 
+	var steer_angle := deg_to_rad(steering_angle_deg)
 	for i in range(_wheel_nodes.size()):
 		var wheel := _wheel_nodes[i]
 		var is_front := i < 2
-		var steer_angle := -steer_input * 0.42 if is_front else 0.0
-		wheel.rotation.y = lerpf(wheel.rotation.y, steer_angle, 1.0 - exp(-12.0 * delta))
-		wheel.rotation.x += forward_speed * delta * 1.7
+		var wheel_steer := -steer_angle if is_front else 0.0
+		wheel.rotation.y = lerpf(wheel.rotation.y, wheel_steer, 1.0 - exp(-14.0 * delta))
+		wheel.rotation.x += longitudinal_speed * delta / maxf(0.05, wheel_radius)
 
-		var suspension := sin(Time.get_ticks_msec() * 0.013 + float(i)) * 0.018 * speed_ratio
-		wheel.position.y = 0.28 + suspension
+		var suspension_load := absf(lateral_accel_g) * 0.014 + absf(longitudinal_accel_g) * 0.010
+		var suspension_wave := sin(Time.get_ticks_msec() * 0.013 + float(i)) * 0.010
+		wheel.position.y = 0.28 + suspension_wave - suspension_load * (1.0 if i % 2 == 0 else -1.0)
 
-func _update_effects(delta: float, forward_speed: float) -> void:
+func _update_effects(delta: float) -> void:
 	_skid_timer = maxf(0.0, _skid_timer - delta)
 	_smoke_timer = maxf(0.0, _smoke_timer - delta)
 
-	var should_skid := speed_kmh > 38.0 and (slip_amount > 0.16 or (Input.is_action_pressed("brake_reverse") and forward_speed > 6.0))
+	var braking_skid := brake_input > 0.78 and speed_kmh > 55.0
+	var should_skid := speed_kmh > 28.0 and (drift_intensity > 0.16 or braking_skid)
+
 	if should_skid and _skid_timer <= 0.0:
-		_spawn_skid_marks()
-		_skid_timer = 0.065
+		_spawn_skid_marks(clampf(maxf(drift_intensity, 0.42 if braking_skid else 0.0), 0.18, 1.0))
+		_skid_timer = lerpf(0.075, 0.035, drift_intensity)
 
-	if should_skid and slip_amount > 0.22 and _smoke_timer <= 0.0:
-		_spawn_smoke_puff()
-		_smoke_timer = 0.085
+	if drift_intensity > 0.30 and speed_kmh > 42.0 and _smoke_timer <= 0.0:
+		_spawn_smoke_puff(drift_intensity)
+		_smoke_timer = lerpf(0.12, 0.055, drift_intensity)
 
-func _spawn_skid_marks() -> void:
-	if _skid_root == null:
+func _spawn_skid_marks(intensity: float) -> void:
+	if _skid_root == null or not _skid_root.is_inside_tree():
 		return
 
 	for local_position in _rear_wheel_local_positions:
 		var marker := MeshInstance3D.new()
 		var mesh := BoxMesh.new()
-		mesh.size = Vector3(0.17, 0.018, 0.68)
+		var mark_length := clampf(absf(longitudinal_speed) * 0.045, 0.30, 1.15)
+		mesh.size = Vector3(0.18, 0.014, mark_length)
 		marker.mesh = mesh
 
 		var material := StandardMaterial3D.new()
-		material.albedo_color = Color(0.04, 0.04, 0.045, 0.54)
+		material.albedo_color = Color(0.025, 0.025, 0.028, lerpf(0.32, 0.78, intensity))
 		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		material.roughness = 1.0
 		marker.material_override = material
@@ -262,44 +726,58 @@ func _spawn_skid_marks() -> void:
 		var mark_height := TerrainBuilder3D.height_at(world_position.x, world_position.z)
 		if track != null and track.is_on_track(world_position, 1.2):
 			mark_height = track.get_surface_height(world_position)
+
+		_skid_root.add_child(marker)
 		marker.global_position = Vector3(world_position.x, mark_height + 0.025, world_position.z)
 		marker.global_rotation = Vector3(0.0, global_rotation.y, 0.0)
-		_skid_root.add_child(marker)
 		_skid_marks.append(marker)
 
-	while _skid_marks.size() > 180:
+	while _skid_marks.size() > 260:
 		var oldest: Node3D = _skid_marks.pop_front()
 		if is_instance_valid(oldest):
 			oldest.queue_free()
 
-func _spawn_smoke_puff() -> void:
+func _spawn_smoke_puff(intensity: float) -> void:
+	var scene := get_tree().current_scene
+	if scene == null:
+		return
+
 	var puff := MeshInstance3D.new()
 	var sphere := SphereMesh.new()
-	sphere.radius = 0.23
-	sphere.height = 0.46
+	sphere.radius = 0.18 + intensity * 0.15
+	sphere.height = sphere.radius * 2.0
 	puff.mesh = sphere
 
 	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(0.82, 0.85, 0.86, 0.42)
+	material.albedo_color = Color(0.82, 0.85, 0.86, 0.18 + intensity * 0.30)
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	puff.material_override = material
 
+	scene.add_child(puff)
 	var rear := to_global(Vector3(0.0, 0.25, 1.35))
 	puff.global_position = rear
-	get_tree().current_scene.add_child(puff)
 
 	var tween := create_tween()
 	tween.set_parallel(true)
-	tween.tween_property(puff, "scale", Vector3.ONE * 2.8, 0.65)
-	tween.tween_property(puff, "global_position:y", rear.y + 0.8, 0.65)
-	tween.tween_property(material, "albedo_color:a", 0.0, 0.65)
+	tween.tween_property(puff, "scale", Vector3.ONE * lerpf(2.0, 3.4, intensity), 0.70)
+	tween.tween_property(puff, "global_position:y", rear.y + 0.75, 0.70)
+	tween.tween_property(material, "albedo_color:a", 0.0, 0.70)
 	tween.chain().tween_callback(puff.queue_free)
 
 func _build_effects() -> void:
 	_skid_root = Node3D.new()
 	_skid_root.name = "SkidMarks"
-	get_tree().current_scene.add_child.call_deferred(_skid_root)
+	call_deferred("_attach_skid_root")
+
+func _attach_skid_root() -> void:
+	if _skid_root == null or _skid_root.is_inside_tree():
+		return
+	var scene := get_tree().current_scene
+	if scene:
+		scene.add_child(_skid_root)
+	else:
+		get_tree().root.add_child(_skid_root)
 
 func _build_audio() -> void:
 	_engine_audio = EngineAudio3D.new()
@@ -315,38 +793,128 @@ func _build_audio() -> void:
 func _build_collision() -> void:
 	var collision := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
-	shape.size = Vector3(1.55, 0.7, 3.0)
+	shape.size = Vector3(1.55, 0.72, 3.0)
 	collision.shape = shape
-	collision.position.y = 0.35
+	collision.position.y = 0.36
 	add_child(collision)
 
 func _autopilot_controls() -> Dictionary:
 	if track == null or track.get_length() <= 0.0:
 		return {"throttle": 0.0, "brake": 1.0, "steer": 0.0, "boost": false}
 
-	var ratio: float = track.get_progress_ratio(global_position)
-	var speed_ratio: float = clampf(speed_kmh / maxf(1.0, top_speed * 3.6), 0.0, 1.0)
-	var lookahead: float = autopilot_lookahead + speed_ratio * 0.012
+	var length := track.get_length()
+	var ratio := track.get_progress_ratio(global_position)
+	var speed_ratio := clampf(speed_kmh / maxf(1.0, top_speed * 3.6), 0.0, 1.0)
+	var near_distance := lerpf(10.0, 22.0, speed_ratio)
+	var far_distance := lerpf(30.0, 58.0, speed_ratio)
 
-	var target := track.get_world_transform_at_ratio(ratio + lookahead)
-	var local_target: Vector3 = to_local(target.origin)
-	var steer: float = clampf(local_target.x / maxf(2.2, absf(local_target.z)), -1.0, 1.0)
+	var target := track.get_world_transform_at_ratio(ratio + near_distance / length)
+	var local_target := to_local(target.origin)
+	var steer := clampf(
+		local_target.x / maxf(2.2, absf(local_target.z) * 0.82),
+		-1.0,
+		1.0
+	)
 
-	var far_target := track.get_world_transform_at_ratio(ratio + lookahead * 1.9)
-	var far_local: Vector3 = to_local(far_target.origin)
-	var turn_severity: float = clampf(absf(far_local.x) / maxf(3.0, absf(far_local.z)), 0.0, 1.0)
-	var desired_speed: float = autopilot_target_speed * lerpf(1.0, 0.63, turn_severity)
-	var current_speed_mps: float = speed_kmh / 3.6
+	var current_track := track.get_world_transform_at_ratio(ratio)
+	var far_target := track.get_world_transform_at_ratio(ratio + far_distance / length)
+	var current_forward := -current_track.basis.z.normalized()
+	var far_forward := -far_target.basis.z.normalized()
+	var heading_change := acos(clampf(current_forward.dot(far_forward), -1.0, 1.0))
+	var turn_severity := clampf(heading_change / deg_to_rad(78.0), 0.0, 1.0)
 
-	var throttle: float = 1.0 if current_speed_mps < desired_speed else 0.0
-	var brake: float = 1.0 if current_speed_mps > desired_speed + 2.2 else 0.0
-	var boost: bool = turn_severity < 0.10 and current_speed_mps < desired_speed * 0.86
+	var desired_speed := lerpf(autopilot_target_speed, 7.5, pow(turn_severity, 0.72))
+	if drift_intensity > 0.20 or absf(vehicle_slip_angle_deg) > 10.0:
+		desired_speed *= 0.82
+	if is_offroad:
+		desired_speed = minf(desired_speed, 8.0)
+
+	var current_speed := speed_kmh / 3.6
+	var throttle := 1.0 if current_speed < desired_speed - 0.55 else 0.0
+	var brake := 1.0 if current_speed > desired_speed + 0.45 else 0.0
+
+	if absf(vehicle_slip_angle_deg) > 14.0:
+		throttle = 0.0
+	if brake > 0.0:
+		throttle = 0.0
 
 	return {
 		"throttle": throttle,
 		"brake": brake,
 		"steer": steer,
-		"boost": boost
+		"boost": false
+	}
+
+func _update_autopilot_recovery(delta: float) -> bool:
+	if track == null:
+		return false
+
+	var stuck := speed_kmh < 7.0 and throttle_input > 0.6
+	if stuck or damage > 0.62:
+		_autopilot_stuck_time += delta
+	else:
+		_autopilot_stuck_time = maxf(0.0, _autopilot_stuck_time - delta * 1.5)
+
+	if _autopilot_stuck_time < 1.2:
+		return false
+
+	var ratio := track.get_progress_ratio(global_position)
+	var recovery := track.get_world_transform_at_ratio(ratio + 0.012)
+	recovery.origin += recovery.basis.y.normalized() * ride_height
+	global_transform = recovery
+
+	reset_dynamics()
+	is_offroad = false
+	damage = 0.0
+
+	_autopilot_stuck_time = 0.0
+	autopilot_recoveries += 1
+	return true
+
+func telemetry() -> Dictionary:
+	return {
+		"speed_kmh": snappedf(speed_kmh, 0.1),
+		"signed_speed_kmh": snappedf(signed_speed_kmh, 0.1),
+		"gear": gear_display(),
+		"gear_index": current_gear,
+		"pending_gear": pending_gear,
+		"engine_rpm": snappedf(engine_rpm, 1.0),
+		"shifting": is_shifting,
+		"shift_time_remaining": snappedf(_shift_timer, 0.001),
+		"steering_angle_deg": snappedf(steering_angle_deg, 0.1),
+		"slip": snappedf(slip_amount, 0.001),
+		"drift_intensity": snappedf(drift_intensity, 0.001),
+		"vehicle_slip_angle_deg": snappedf(vehicle_slip_angle_deg, 0.1),
+		"front_slip_angle_deg": snappedf(front_slip_angle_deg, 0.1),
+		"rear_slip_angle_deg": snappedf(rear_slip_angle_deg, 0.1),
+		"front_tire_saturation": snappedf(front_tire_saturation, 0.01),
+		"rear_tire_saturation": snappedf(rear_tire_saturation, 0.01),
+		"lateral_accel_g": snappedf(lateral_accel_g, 0.01),
+		"longitudinal_accel_g": snappedf(longitudinal_accel_g, 0.01),
+		"yaw_rate_deg_s": snappedf(rad_to_deg(yaw_rate), 0.1),
+		"fuel_liters": snappedf(fuel_liters, 0.01),
+		"fuel_percent": snappedf((fuel_liters / maxf(0.001, fuel_capacity_liters)) * 100.0, 0.1),
+		"tire_health": snappedf(tire_health, 0.001),
+		"tire_percent": snappedf(tire_health * 100.0, 0.1),
+		"damage": snappedf(damage, 0.001),
+		"damage_percent": snappedf(damage * 100.0, 0.1),
+		"offroad": is_offroad,
+		"in_pit_lane": in_pit_lane,
+		"pit_servicing": pit_servicing,
+		"autopilot_recoveries": autopilot_recoveries,
+		"position": {
+			"x": snappedf(global_position.x, 0.01),
+			"y": snappedf(global_position.y, 0.01),
+			"z": snappedf(global_position.z, 0.01)
+		},
+		"tuning": {
+			"top_speed": top_speed,
+			"acceleration": acceleration,
+			"brake_force": brake_force,
+			"lateral_grip": lateral_grip,
+			"steering_rate": steering_rate,
+			"turbo_force": turbo_force
+		}
 	}
 
 func _spawn_sparks(strength: float) -> void:
@@ -362,19 +930,19 @@ func _spawn_sparks(strength: float) -> void:
 	spark_material.roughness = 0.3
 
 	var count := int(lerpf(5.0, 13.0, strength))
-	for i in range(count):
+	for _i in range(count):
 		var spark := MeshInstance3D.new()
 		var mesh := BoxMesh.new()
 		mesh.size = Vector3(0.035, 0.035, 0.18 + strength * 0.14)
 		spark.mesh = mesh
 		spark.material_override = spark_material.duplicate()
+		world.add_child(spark)
 		spark.global_position = global_position + Vector3.UP * 0.28
 		spark.rotation = Vector3(
 			randf_range(-0.9, 0.9),
 			randf_range(-PI, PI),
 			randf_range(-0.9, 0.9)
 		)
-		world.add_child(spark)
 
 		var direction := Vector3(
 			randf_range(-1.0, 1.0),

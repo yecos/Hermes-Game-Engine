@@ -4,6 +4,7 @@ extends AudioStreamPlayer3D
 var car: ArcadeCarController3D
 var playback: AudioStreamGeneratorPlayback
 var phase: float = 0.0
+var sub_phase: float = 0.0
 var sample_rate: float = 22050.0
 
 func _ready() -> void:
@@ -25,13 +26,25 @@ func _process(_delta: float) -> void:
 	if available <= 0:
 		return
 
-	var normalized_speed := clampf(car.speed_kmh / 165.0, 0.0, 1.15)
-	var rpm_factor := 0.16 + normalized_speed * 0.84
-	var base_frequency := 78.0 + rpm_factor * 190.0
-	var amplitude := 0.035 + normalized_speed * 0.045
+	var rpm_factor := clampf(
+		(car.engine_rpm - car.idle_rpm) / maxf(1.0, car.redline_rpm - car.idle_rpm),
+		0.0,
+		1.08
+	)
+	var load := clampf(car.throttle_input, 0.0, 1.0)
+	var shift_cut := 0.46 if car.is_shifting else 1.0
+	var base_frequency := 72.0 + rpm_factor * 270.0
+	var sub_frequency := 36.0 + rpm_factor * 96.0
+	var amplitude := (0.025 + load * 0.050 + rpm_factor * 0.020) * shift_cut
 
 	for _i in range(available):
 		phase = fmod(phase + TAU * base_frequency / sample_rate, TAU)
-		var harmonic := sin(phase) * 0.66 + sin(phase * 2.0) * 0.22 + sin(phase * 0.5) * 0.12
+		sub_phase = fmod(sub_phase + TAU * sub_frequency / sample_rate, TAU)
+		var harmonic := (
+			sin(phase) * 0.54
+			+ sin(phase * 2.0) * 0.22
+			+ sin(phase * 3.01) * 0.09
+			+ sin(sub_phase) * 0.15
+		)
 		var sample := harmonic * amplitude
 		playback.push_frame(Vector2(sample, sample))

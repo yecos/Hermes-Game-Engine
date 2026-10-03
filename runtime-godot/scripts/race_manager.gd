@@ -23,6 +23,9 @@ var _last_sector: int = 1
 var _position_label: Label
 var _lap_label: Label
 var _speed_label: Label
+var _gear_label: Label
+var _rpm_label: Label
+var _drift_label: Label
 var _status_label: Label
 var _timing_label: Label
 var _resources_label: Label
@@ -74,6 +77,15 @@ func _process(_delta: float) -> void:
 	_position_label.text = _ordinal(current_position)
 	_lap_label.text = "LAP %d/%d · S%d" % [min(player_lap + 1, total_laps), total_laps, current_sector]
 	_speed_label.text = "%03d km/h" % int(player.speed_kmh)
+	_gear_label.text = player.gear_display()
+	_rpm_label.text = "%04d RPM%s" % [
+		int(player.engine_rpm),
+		"  SHIFT" if player.is_shifting else ""
+	]
+	_drift_label.text = "SLIP %4.1f°  %3d%%" % [
+		absf(player.vehicle_slip_angle_deg),
+		int(player.drift_intensity * 100.0)
+	]
 
 	var best_text := "--:--.---"
 	if best_lap_time > 0.0:
@@ -174,9 +186,27 @@ func _build_hud() -> void:
 	_speed_label.position = Vector2(1050, 28)
 	layer.add_child(_speed_label)
 
-	var controls := _make_label("WASD / ARROWS · SPACE TURBO · E PIT", 14)
-	controls.position = Vector2(915, 68)
+	var controls := _make_label("W ACCEL | S BRAKE/REVERSE | A/D STEER | SPACE BOOST | E PIT | R REPLAY", 13)
+	controls.position = Vector2(720, 68)
 	layer.add_child(controls)
+
+	_gear_label = _make_label("1", 52)
+	_gear_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_gear_label.position = Vector2(1160, 176)
+	_gear_label.size = Vector2(80, 64)
+	layer.add_child(_gear_label)
+
+	_rpm_label = _make_label("1050 RPM", 14)
+	_rpm_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_rpm_label.position = Vector2(1010, 236)
+	_rpm_label.size = Vector2(230, 26)
+	layer.add_child(_rpm_label)
+
+	_drift_label = _make_label("SLIP 0.0°   0%", 13)
+	_drift_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_drift_label.position = Vector2(1000, 262)
+	_drift_label.size = Vector2(240, 24)
+	layer.add_child(_drift_label)
 
 	_timing_label = _make_label("LAP 0:00.000
 BEST --:--.---

@@ -252,8 +252,7 @@ func _reset_player() -> void:
 	var spawn := track.get_world_transform_at_ratio(0.018)
 	spawn.origin += spawn.basis.x * -1.4 + Vector3.UP * player.ride_height
 	player.global_transform = spawn
-	player.velocity = Vector3.ZERO
-	player.speed_kmh = 0.0
+	player.reset_dynamics()
 
 	if race_manager:
 		race_manager.reset_session()
@@ -314,8 +313,7 @@ func _finish_test_run(completed: bool, reason: String) -> void:
 	if player:
 		player.autopilot_enabled = false
 		player.input_enabled = true
-		player.velocity = Vector3.ZERO
-		player.speed_kmh = 0.0
+		player.reset_dynamics()
 
 	var count := _test_samples.size()
 	var speed_sum := 0.0
