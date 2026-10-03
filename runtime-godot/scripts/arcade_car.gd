@@ -40,6 +40,14 @@ extends CharacterBody3D
 @export var spin_recovery_strength: float = 12.0
 @export var surface_grip_offroad: float = 0.58
 
+@export_group("Collision Physics")
+@export var car_restitution: float = 0.18
+@export var static_restitution: float = 0.10
+@export var collision_friction: float = 0.24
+@export var collision_yaw_transfer: float = 0.28
+@export var impact_damage_threshold_mps: float = 4.0
+@export var impact_damage_scale: float = 0.010
+
 @export_group("Driver Feel")
 @export var throttle_rise_rate: float = 3.8
 @export var throttle_release_rate: float = 7.5
@@ -100,6 +108,10 @@ var longitudinal_accel_g: float = 0.0
 var front_tire_saturation: float = 0.0
 var rear_tire_saturation: float = 0.0
 
+var last_impact_speed_mps: float = 0.0
+var last_impact_impulse_ns: float = 0.0
+var impact_count: int = 0
+
 var engine_rpm: float = 1050.0
 var current_gear: int = 1
 var pending_gear: int = 1
@@ -142,6 +154,9 @@ var _shift_kick: float = 0.0
 var _stationary_reverse_hold: float = 0.0
 var _steering_reversal_target: float = 0.0
 var _autopilot_stuck_time: float = 0.0
+var _pre_move_velocity: Vector3 = Vector3.ZERO
+var _resolved_vehicle_collision_frames: Dictionary = {}
+var _contact_event_frames: Dictionary = {}
 
 var _visual: Node3D
 var _wheel_nodes: Array[Node3D] = []
@@ -690,12 +705,17 @@ func reset_dynamics() -> void:
 	rear_slip_angle_deg = 0.0
 	front_tire_saturation = 0.0
 	rear_tire_saturation = 0.0
+	last_impact_speed_mps = 0.0
+	last_impact_impulse_ns = 0.0
+	impact_count = 0
 	throttle_input = 0.0
 	brake_input = 0.0
 	steering_input = 0.0
 	steering_angle_deg = 0.0
 	_steering_reversal_target = 0.0
 	_autopilot_stuck_time = 0.0
+	_resolved_vehicle_collision_frames.clear()
+	_contact_event_frames.clear()
 	reset_transmission()
 
 func _apply_world_motion(delta: float) -> void:
@@ -708,8 +728,9 @@ func _apply_world_motion(delta: float) -> void:
 
 	velocity = forward * longitudinal_speed + right * lateral_speed_body
 	velocity.y = 0.0
+	_pre_move_velocity = velocity
 	move_and_slide()
-	_apply_collision_damage()
+	_apply_collision_response()
 
 	# Recover body-frame state after collision response.
 	forward = -global_transform.basis.z.normalized()
@@ -756,23 +777,280 @@ func _update_pit_service(delta: float, pit_requested: bool) -> void:
 	tire_health = minf(1.0, tire_health + pit_service_rate * delta)
 	damage = maxf(0.0, damage - pit_service_rate * 0.45 * delta)
 
-func _apply_collision_damage() -> void:
+func _apply_collision_response() -> void:
 	var count := get_slide_collision_count()
 	if count <= 0:
 		return
 
-	var impact_speed := absf(longitudinal_speed)
-	if impact_speed < 3.5:
+	for i in range(count):
+		var collision := get_slide_collision(i)
+		if collision == null:
+			continue
+
+		var normal: Vector3 = collision.get_normal()
+		normal.y = 0.0
+		if normal.length_squared() < 0.0001:
+			continue
+		normal = normal.normalized()
+
+		var contact: Vector3 = collision.get_position()
+		var collider := collision.get_collider()
+		var collider_id := collision.get_collider_id()
+
+		if collider is ArcadeCarController3D:
+			_resolve_vehicle_impact(collider as ArcadeCarController3D, normal, contact)
+		elif collider is RigidBody3D:
+			_resolve_rigidbody_impact(collider as RigidBody3D, normal, contact, collider_id)
+		else:
+			_resolve_static_impact(normal, contact, collider_id)
+
+func _world_planar_velocity() -> Vector3:
+	var forward := -global_transform.basis.z.normalized()
+	var right := global_transform.basis.x.normalized()
+	var result := forward * longitudinal_speed + right * lateral_speed_body
+	result.y = 0.0
+	return result
+
+func _set_world_planar_velocity(world_velocity: Vector3) -> void:
+	var planar := world_velocity
+	planar.y = 0.0
+	velocity = planar
+
+	var forward := -global_transform.basis.z.normalized()
+	var right := global_transform.basis.x.normalized()
+	longitudinal_speed = planar.dot(forward)
+	lateral_speed_body = planar.dot(right)
+	signed_speed_kmh = longitudinal_speed * 3.6
+	speed_kmh = absf(signed_speed_kmh)
+
+func _resolve_vehicle_impact(
+	other: ArcadeCarController3D,
+	normal: Vector3,
+	contact: Vector3
+) -> void:
+	if other == null or not is_instance_valid(other):
 		return
 
-	damage = clampf(damage + minf(0.09, impact_speed * 0.0020), 0.0, 1.0)
-	longitudinal_speed *= 0.48
-	lateral_speed_body *= 0.30
-	yaw_rate *= 0.42
+	var physics_frame := Engine.get_physics_frames()
+	var other_id := other.get_instance_id()
+	if int(_resolved_vehicle_collision_frames.get(other_id, -1)) == physics_frame:
+		return
 
+	_resolved_vehicle_collision_frames[other_id] = physics_frame
+	other._resolved_vehicle_collision_frames[get_instance_id()] = physics_frame
+
+	var separation := global_position - other.global_position
+	separation.y = 0.0
+	if separation.length_squared() > 0.0001 and separation.dot(normal) < 0.0:
+		normal = -normal
+
+	var velocity_a := _pre_move_velocity
+	velocity_a.y = 0.0
+	var velocity_b := other._world_planar_velocity()
+	var relative_velocity := velocity_a - velocity_b
+	var relative_normal_speed := relative_velocity.dot(normal)
+
+	if relative_normal_speed >= -0.05:
+		return
+
+	var inv_mass_a := 1.0 / maxf(1.0, vehicle_mass)
+	var inv_mass_b := 1.0 / maxf(1.0, other.vehicle_mass)
+	var inv_mass_sum := inv_mass_a + inv_mass_b
+
+	var previous_contact_frame := int(_contact_event_frames.get(other_id, -100000))
+	var is_new_impact := physics_frame - previous_contact_frame > 10
+	_contact_event_frames[other_id] = physics_frame
+	other._contact_event_frames[get_instance_id()] = physics_frame
+
+	var restitution := clampf(
+		(car_restitution + other.car_restitution) * 0.5,
+		0.0,
+		0.42
+	)
+	if not is_new_impact:
+		restitution *= 0.12
+	var normal_impulse_magnitude := (
+		-(1.0 + restitution) * relative_normal_speed / maxf(0.000001, inv_mass_sum)
+	)
+	var normal_impulse := normal * normal_impulse_magnitude
+
+	var tangent_velocity := relative_velocity - normal * relative_normal_speed
+	var tangent_impulse := Vector3.ZERO
+	if tangent_velocity.length_squared() > 0.0001:
+		var tangent := tangent_velocity.normalized()
+		var tangent_impulse_magnitude := (
+			-relative_velocity.dot(tangent) / maxf(0.000001, inv_mass_sum)
+		)
+		var friction_limit := normal_impulse_magnitude * minf(
+			collision_friction,
+			other.collision_friction
+		)
+		tangent_impulse_magnitude = clampf(
+			tangent_impulse_magnitude,
+			-friction_limit,
+			friction_limit
+		)
+		tangent_impulse = tangent * tangent_impulse_magnitude
+
+	var impulse := normal_impulse + tangent_impulse
+	var new_velocity_a := velocity_a + impulse * inv_mass_a
+	var new_velocity_b := velocity_b - impulse * inv_mass_b
+
+	_set_world_planar_velocity(new_velocity_a)
+	other._set_world_planar_velocity(new_velocity_b)
+	_pre_move_velocity = new_velocity_a
+	other._pre_move_velocity = new_velocity_b
+
+	_apply_contact_yaw_impulse(contact, impulse)
+	other._apply_contact_yaw_impulse(contact, -impulse)
+
+	var closing_speed := absf(relative_normal_speed)
+	if is_new_impact and closing_speed > 1.0:
+		_register_impact(closing_speed, impulse.length())
+		other._register_impact(closing_speed, impulse.length())
+
+func _resolve_rigidbody_impact(
+	other: RigidBody3D,
+	normal: Vector3,
+	contact: Vector3,
+	collider_id: int
+) -> void:
+	if other == null or not is_instance_valid(other):
+		return
+
+	var velocity_a := _pre_move_velocity
+	velocity_a.y = 0.0
+	var velocity_b := other.linear_velocity
+	velocity_b.y = 0.0
+
+	var relative_velocity := velocity_a - velocity_b
+	var relative_normal_speed := relative_velocity.dot(normal)
+	if relative_normal_speed >= -0.05:
+		return
+
+	var physics_frame := Engine.get_physics_frames()
+	var previous_contact_frame := int(_contact_event_frames.get(collider_id, -100000))
+	var is_new_impact := physics_frame - previous_contact_frame > 10
+	_contact_event_frames[collider_id] = physics_frame
+
+	var inv_mass_a := 1.0 / maxf(1.0, vehicle_mass)
+	var inv_mass_b := 1.0 / maxf(0.01, other.mass)
+	var inv_mass_sum := inv_mass_a + inv_mass_b
+	var restitution := clampf(car_restitution, 0.0, 0.36)
+	if not is_new_impact:
+		restitution *= 0.12
+
+	var normal_impulse_magnitude := (
+		-(1.0 + restitution) * relative_normal_speed / maxf(0.000001, inv_mass_sum)
+	)
+	var normal_impulse := normal * normal_impulse_magnitude
+
+	var tangent_velocity := relative_velocity - normal * relative_normal_speed
+	var tangent_impulse := Vector3.ZERO
+	if tangent_velocity.length_squared() > 0.0001:
+		var tangent := tangent_velocity.normalized()
+		var tangent_impulse_magnitude := (
+			-relative_velocity.dot(tangent) / maxf(0.000001, inv_mass_sum)
+		)
+		var friction_limit := normal_impulse_magnitude * collision_friction
+		tangent_impulse_magnitude = clampf(
+			tangent_impulse_magnitude,
+			-friction_limit,
+			friction_limit
+		)
+		tangent_impulse = tangent * tangent_impulse_magnitude
+
+	var impulse := normal_impulse + tangent_impulse
+	var new_velocity_a := velocity_a + impulse * inv_mass_a
+	_set_world_planar_velocity(new_velocity_a)
+	_pre_move_velocity = new_velocity_a
+
+	var local_contact := contact - other.global_position
+	other.apply_impulse(-impulse, local_contact)
+	_apply_contact_yaw_impulse(contact, impulse)
+	if is_new_impact and absf(relative_normal_speed) > 1.0:
+		_register_impact(absf(relative_normal_speed), impulse.length())
+
+func _resolve_static_impact(
+	normal: Vector3,
+	contact: Vector3,
+	collider_id: int
+) -> void:
+	var incoming_velocity := _pre_move_velocity
+	incoming_velocity.y = 0.0
+	var normal_speed := incoming_velocity.dot(normal)
+
+	if normal_speed >= -0.05:
+		return
+
+	var physics_frame := Engine.get_physics_frames()
+	var previous_contact_frame := int(_contact_event_frames.get(collider_id, -100000))
+	var is_new_impact := physics_frame - previous_contact_frame > 10
+	_contact_event_frames[collider_id] = physics_frame
+
+	var restitution := static_restitution if is_new_impact else static_restitution * 0.08
+	var mass := maxf(1.0, vehicle_mass)
+	var normal_impulse_magnitude := -(1.0 + restitution) * normal_speed * mass
+	var normal_impulse := normal * normal_impulse_magnitude
+
+	var tangent_velocity := incoming_velocity - normal * normal_speed
+	var tangent_impulse := Vector3.ZERO
+	if tangent_velocity.length_squared() > 0.0001:
+		var tangent := tangent_velocity.normalized()
+		var tangent_impulse_magnitude := -incoming_velocity.dot(tangent) * mass
+		var friction_limit := normal_impulse_magnitude * collision_friction
+		tangent_impulse_magnitude = clampf(
+			tangent_impulse_magnitude,
+			-friction_limit,
+			friction_limit
+		)
+		tangent_impulse = tangent * tangent_impulse_magnitude
+
+	var impulse := normal_impulse + tangent_impulse
+	var outgoing_velocity := incoming_velocity + impulse / mass
+	_set_world_planar_velocity(outgoing_velocity)
+	_pre_move_velocity = outgoing_velocity
+	_apply_contact_yaw_impulse(contact, impulse)
+	if is_new_impact and absf(normal_speed) > 1.0:
+		_register_impact(absf(normal_speed), impulse.length())
+
+func _apply_contact_yaw_impulse(contact: Vector3, impulse: Vector3) -> void:
+	var lever := contact - global_position
+	lever.y = 0.0
+	var planar_impulse := impulse
+	planar_impulse.y = 0.0
+
+	var torque_impulse_y := (
+		lever.z * planar_impulse.x
+		- lever.x * planar_impulse.z
+	)
+	yaw_rate += (
+		-torque_impulse_y
+		/ maxf(100.0, yaw_inertia)
+		* collision_yaw_transfer
+	)
+	yaw_rate = clampf(yaw_rate, -1.8, 1.8)
+
+func _register_impact(impact_speed: float, impulse_ns: float) -> void:
+	last_impact_speed_mps = impact_speed
+	last_impact_impulse_ns = impulse_ns
+	impact_count += 1
+
+	if impact_speed > impact_damage_threshold_mps:
+		var excess_speed := impact_speed - impact_damage_threshold_mps
+		var impulse_scale := clampf(
+			impulse_ns / maxf(1.0, vehicle_mass * 8.0),
+			0.35,
+			1.65
+		)
+		var damage_delta := excess_speed * impact_damage_scale * impulse_scale
+		damage = clampf(damage + minf(0.18, damage_delta), 0.0, 1.0)
+
+	var feedback_strength := clampf(impact_speed / 24.0, 0.08, 1.0)
 	if _fx_audio:
-		_fx_audio.trigger_impact(clampf(impact_speed / 28.0, 0.15, 1.0))
-	_spawn_sparks(clampf(impact_speed / 24.0, 0.25, 1.0))
+		_fx_audio.trigger_impact(feedback_strength)
+	if impact_speed > 2.0:
+		_spawn_sparks(clampf(feedback_strength, 0.18, 1.0))
 
 func _update_visuals(delta: float) -> void:
 	if _visual == null:
@@ -999,6 +1277,10 @@ func telemetry() -> Dictionary:
 		"rear_slip_angle_deg": snappedf(rear_slip_angle_deg, 0.1),
 		"front_tire_saturation": snappedf(front_tire_saturation, 0.01),
 		"rear_tire_saturation": snappedf(rear_tire_saturation, 0.01),
+		"last_impact_speed_mps": snappedf(last_impact_speed_mps, 0.01),
+		"last_impact_impulse_ns": snappedf(last_impact_impulse_ns, 1.0),
+		"impact_count": impact_count,
+		"vehicle_mass": snappedf(vehicle_mass, 1.0),
 		"lateral_accel_g": snappedf(lateral_accel_g, 0.01),
 		"longitudinal_accel_g": snappedf(longitudinal_accel_g, 0.01),
 		"yaw_rate_deg_s": snappedf(rad_to_deg(yaw_rate), 0.1),

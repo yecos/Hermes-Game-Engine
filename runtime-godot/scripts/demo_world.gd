@@ -485,13 +485,27 @@ func _spawn_ai() -> void:
 		ai.body_color = colors[i]
 		ai.progress_ratio = fposmod(0.985 - float(i) * 0.012, 1.0)
 
-		# Same physics for every car. Driver parameters only change the requested
-		# inputs and racing decisions.
-		ai.speed_mps = 25.5 + float(i) * 0.65
-		ai.driver_skill = clampf(0.80 + float(i) * 0.035, 0.0, 1.0)
-		ai.aggression = clampf(0.44 + float(i) * 0.085, 0.0, 1.0)
-		ai.braking_confidence = clampf(0.82 + float(i) * 0.035, 0.0, 1.0)
-		ai.lane_offset = (float(i % 3) - 1.0) * 0.95
+		# Same physics for every car. Only the driver's decisions change.
+		var styles := ["smooth", "balanced", "late_braker", "drifter", "aggressive"]
+		var drift_biases := [0.04, 0.16, 0.24, 0.78, 0.48]
+		var late_brake_biases := [0.00, 0.10, 0.55, 0.24, 0.48]
+		var throttle_commitments := [0.42, 0.58, 0.68, 0.90, 0.78]
+		var countersteer_skills := [0.92, 0.90, 0.84, 0.94, 0.86]
+		var line_variations := [0.12, 0.22, 0.34, 0.46, 0.58]
+
+		ai.speed_mps = 25.0 + float(i) * 0.80
+		ai.driver_skill = clampf(0.82 + float(i) * 0.03, 0.0, 1.0)
+		ai.aggression = clampf(0.38 + float(i) * 0.12, 0.0, 1.0)
+		ai.braking_confidence = clampf(0.86 + float(i) * 0.025, 0.0, 1.0)
+		ai.lane_offset = (float(i % 3) - 1.0) * 0.92
+
+		ai.driving_style = styles[i]
+		ai.drift_bias = drift_biases[i]
+		ai.late_brake_bias = late_brake_biases[i]
+		ai.throttle_commitment = throttle_commitments[i]
+		ai.countersteer_skill = countersteer_skills[i]
+		ai.line_variation = line_variations[i]
+		ai.line_phase = float(i) * 1.37
 		add_child(ai)
 
 		var spawn := track.get_world_transform_at_ratio(ai.progress_ratio)
