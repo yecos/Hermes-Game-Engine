@@ -215,6 +215,7 @@ async function buildGodotPlan(prompt) {
     'Return ONLY one JSON object and no markdown.',
     'Allowed commands:',
     '{"command":"telemetry"}',
+    '{"command":"ai_telemetry"}',
     '{"command":"reset_car"}',
     '{"command":"service_car"}',
     '{"command":"set_tuning","values":{"top_speed":number?,"acceleration":number?,"brake_force":number?,"lateral_grip":number?,"steering_rate":number?,"turbo_force":number?}}',
@@ -252,6 +253,7 @@ async function buildGodotPlan(prompt) {
   const plan = extractJsonObject(content);
   const allowedCommands = new Set([
     'telemetry',
+    'ai_telemetry',
     'reset_car',
     'service_car',
     'set_tuning',
@@ -497,6 +499,11 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && req.url === '/godot/telemetry') {
       const result = await godotCall({ command: 'telemetry' });
+      return sendJson(res, 200, result, origin);
+    }
+
+    if (req.method === 'GET' && req.url === '/godot/ai') {
+      const result = await godotCall({ command: 'ai_telemetry' });
       return sendJson(res, 200, result, origin);
     }
 

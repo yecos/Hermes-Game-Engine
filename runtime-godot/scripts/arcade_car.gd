@@ -175,11 +175,11 @@ func _physics_process(delta: float) -> void:
 	if not input_enabled and not autopilot_enabled:
 		return
 
-	var throttle := Input.get_action_strength("accelerate")
-	var brake_reverse := Input.get_action_strength("brake_reverse")
-	var steer := Input.get_axis("steer_left", "steer_right")
-	var boost := Input.is_action_pressed("boost")
-	var pit_requested := Input.is_action_pressed("pit_service")
+	var throttle := 0.0
+	var brake_reverse := 0.0
+	var steer := 0.0
+	var boost := false
+	var pit_requested := false
 
 	if autopilot_enabled:
 		var controls := _autopilot_controls()
@@ -187,12 +187,15 @@ func _physics_process(delta: float) -> void:
 		brake_reverse = float(controls.brake)
 		steer = float(controls.steer)
 		boost = bool(controls.boost)
-		pit_requested = false
-		throttle_input = clampf(throttle, 0.0, 1.0)
-		brake_input = clampf(brake_reverse, 0.0, 1.0)
-		steering_input = clampf(steer, -1.0, 1.0)
 	else:
-		_update_driver_inputs(delta, throttle, brake_reverse, steer)
+		throttle = Input.get_action_strength("accelerate")
+		brake_reverse = Input.get_action_strength("brake_reverse")
+		steer = Input.get_axis("steer_left", "steer_right")
+		boost = Input.is_action_pressed("boost")
+		pit_requested = Input.is_action_pressed("pit_service")
+
+	# Human and AI drivers pass through the same pedal/steering response model.
+	_update_driver_inputs(delta, throttle, brake_reverse, steer)
 
 	in_pit_lane = track != null and track.is_in_pit_zone(global_position)
 	is_offroad = track != null and not track.is_on_track(global_position, -0.20)

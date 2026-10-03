@@ -5,6 +5,7 @@ extends Node
 
 var player: ArcadeCarController3D
 var track: TrackSpline
+var ai_racers: Array[AIRacer3D] = []
 var race_manager: RaceManager3D
 var replay_manager: ReplayManager3D
 
@@ -84,6 +85,8 @@ func _handle_line(peer: StreamPeerTCP, line: String) -> void:
 	match command:
 		"telemetry":
 			_send(peer, {"ok": true, "telemetry": _telemetry()})
+		"ai_telemetry":
+			_send(peer, {"ok": true, "racers": _ai_telemetry()})
 		"set_tuning":
 			var values: Dictionary = payload.get("values", {})
 			_apply_tuning(values)
@@ -129,6 +132,15 @@ func _handle_line(peer: StreamPeerTCP, line: String) -> void:
 			_send(peer, {"ok": true, "track": track.track_snapshot() if track else {}})
 		_:
 			_send(peer, {"ok": false, "error": "unknown_command", "command": command})
+
+func _ai_telemetry() -> Array[Dictionary]:
+	var racers: Array[Dictionary] = []
+	for ai in ai_racers:
+		if is_instance_valid(ai):
+			var data := ai.ai_telemetry()
+			data["name"] = ai.name
+			racers.append(data)
+	return racers
 
 func _set_track_point(payload: Dictionary) -> Dictionary:
 	if track == null:

@@ -462,6 +462,7 @@ func _spawn_player() -> void:
 	player.name = "PlayerCar"
 	player.body_color = Color("#ef4052")
 	player.track = track
+	player.add_to_group("race_cars")
 	add_child(player)
 
 	var spawn := track.get_world_transform_at_ratio(0.018)
@@ -483,13 +484,20 @@ func _spawn_ai() -> void:
 		ai.track = track
 		ai.body_color = colors[i]
 		ai.progress_ratio = fposmod(0.985 - float(i) * 0.012, 1.0)
-		ai.speed_mps = 25.5 + float(i) * 0.55
-		ai.lane_offset = (float(i % 3) - 1.0) * 1.15
+
+		# Same physics for every car. Driver parameters only change the requested
+		# inputs and racing decisions.
+		ai.speed_mps = 25.5 + float(i) * 0.65
+		ai.driver_skill = clampf(0.80 + float(i) * 0.035, 0.0, 1.0)
+		ai.aggression = clampf(0.44 + float(i) * 0.085, 0.0, 1.0)
+		ai.braking_confidence = clampf(0.82 + float(i) * 0.035, 0.0, 1.0)
+		ai.lane_offset = (float(i % 3) - 1.0) * 0.95
 		add_child(ai)
 
 		var spawn := track.get_world_transform_at_ratio(ai.progress_ratio)
 		spawn.origin += spawn.basis.x * ai.lane_offset + Vector3.UP * 0.48
 		ai.global_transform = spawn
+		ai.reset_dynamics()
 		ai_racers.append(ai)
 
 func _spawn_camera() -> void:
@@ -524,6 +532,7 @@ func _spawn_runtime_bridge() -> void:
 	runtime_bridge.name = "HermesRuntimeBridge"
 	runtime_bridge.player = player
 	runtime_bridge.track = track
+	runtime_bridge.ai_racers = ai_racers
 	runtime_bridge.race_manager = race_manager
 	runtime_bridge.replay_manager = replay_manager
 	add_child(runtime_bridge)
