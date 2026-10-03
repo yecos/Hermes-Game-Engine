@@ -159,6 +159,7 @@ var _resolved_vehicle_collision_frames: Dictionary = {}
 var _contact_event_frames: Dictionary = {}
 
 var _visual: Node3D
+var _visual_detail_rig: Node3D
 var _wheel_nodes: Array[Node3D] = []
 var _rear_wheel_local_positions: Array[Vector3] = [
 	Vector3(-0.82, 0.28, 0.88),
@@ -168,8 +169,11 @@ var _skid_root: Node3D
 var _skid_marks: Array[Node3D] = []
 var _skid_timer: float = 0.0
 var _smoke_timer: float = 0.0
+var _dust_timer: float = 0.0
 var _engine_audio: EngineAudio3D
 var _fx_audio: VehicleFxAudio3D
+var _brake_light_material: StandardMaterial3D
+var _headlight_material: StandardMaterial3D
 
 const AIR_DENSITY := 1.225
 const GRAVITY_ACCEL := 9.81
@@ -180,6 +184,7 @@ func _ready() -> void:
 	engine_rpm = idle_rpm
 	_build_collision()
 	_build_visual()
+	_build_visual_details()
 	_build_effects()
 	_build_audio()
 
@@ -1065,6 +1070,16 @@ func _update_visuals(delta: float) -> void:
 
 	_visual.rotation.z = lerpf(_visual.rotation.z, target_roll, 1.0 - exp(-8.0 * delta))
 	_visual.rotation.x = lerpf(_visual.rotation.x, target_pitch, 1.0 - exp(-9.5 * delta))
+	if _visual_detail_rig:
+		_visual_detail_rig.rotation.z = _visual.rotation.z
+		_visual_detail_rig.rotation.x = _visual.rotation.x
+
+	if _brake_light_material:
+		var brake_glow := clampf(brake_input + (0.35 if is_shifting and longitudinal_accel_g < -0.05 else 0.0), 0.0, 1.0)
+		_brake_light_material.emission_energy_multiplier = lerpf(0.75, 5.2, brake_glow)
+		_brake_light_material.albedo_color = Color("#8f101d").lerp(Color("#ff3042"), brake_glow)
+	if _headlight_material:
+		_headlight_material.emission_energy_multiplier = lerpf(1.8, 2.8, clampf(speed_kmh / 160.0, 0.0, 1.0))
 
 	var steer_angle := deg_to_rad(steering_angle_deg)
 	for i in range(_wheel_nodes.size()):
@@ -1081,6 +1096,7 @@ func _update_visuals(delta: float) -> void:
 func _update_effects(delta: float) -> void:
 	_skid_timer = maxf(0.0, _skid_timer - delta)
 	_smoke_timer = maxf(0.0, _smoke_timer - delta)
+	_dust_timer = maxf(0.0, _dust_timer - delta)
 
 	var braking_skid := brake_input > 0.78 and speed_kmh > 55.0
 	var should_skid := speed_kmh > 28.0 and (drift_intensity > 0.16 or braking_skid)
@@ -1089,9 +1105,13 @@ func _update_effects(delta: float) -> void:
 		_spawn_skid_marks(clampf(maxf(drift_intensity, 0.42 if braking_skid else 0.0), 0.18, 1.0))
 		_skid_timer = lerpf(0.075, 0.035, drift_intensity)
 
-	if drift_intensity > 0.30 and speed_kmh > 42.0 and _smoke_timer <= 0.0:
+	if drift_intensity > 0.26 and speed_kmh > 36.0 and _smoke_timer <= 0.0:
 		_spawn_smoke_puff(drift_intensity)
-		_smoke_timer = lerpf(0.12, 0.055, drift_intensity)
+		_smoke_timer = lerpf(0.105, 0.042, drift_intensity)
+
+	if is_offroad and speed_kmh > 18.0 and _dust_timer <= 0.0:
+		_spawn_dust_puff(clampf(speed_kmh / 105.0, 0.18, 1.0))
+		_dust_timer = lerpf(0.11, 0.048, clampf(speed_kmh / 120.0, 0.0, 1.0))
 
 func _spawn_skid_marks(intensity: float) -> void:
 	if _skid_root == null or not _skid_root.is_inside_tree():
@@ -1117,7 +1137,11 @@ func _spawn_skid_marks(intensity: float) -> void:
 
 		_skid_root.add_child(marker)
 		marker.global_position = Vector3(world_position.x, mark_height + 0.025, world_position.z)
-		marker.global_rotation = Vector3(0.0, global_rotation.y, 0.0)
+		var planar_velocity := _world_planar_velocity()
+		var mark_yaw := global_rotation.y
+		if planar_velocity.length_squared() > 0.5:
+			mark_yaw = atan2(-planar_velocity.x, -planar_velocity.z)
+		marker.global_rotation = Vector3(0.0, mark_yaw, 0.0)
 		_skid_marks.append(marker)
 
 	while _skid_marks.size() > 260:
@@ -1130,28 +1154,132 @@ func _spawn_smoke_puff(intensity: float) -> void:
 	if scene == null:
 		return
 
+	for local_position in _rear_wheel_local_positions:
+		var world_position := to_global(local_position + Vector3(0.0, 0.04, 0.12))
+		var lateral_bias := clampf(lateral_speed_body * 0.035, -0.55, 0.55)
+		world_position += global_transform.basis.x.normalized() * lateral_bias
+		_spawn_transient_puff(
+			scene,
+			world_position,
+			Color(0.82, 0.84, 0.85, 0.15 + intensity * 0.22),
+			0.16 + intensity * 0.12,
+			lerpf(0.72, 1.05, intensity),
+			lerpf(2.0, 3.3, intensity),
+			0.78
+		)
+
+func _spawn_dust_puff(intensity: float) -> void:
+	var scene := get_tree().current_scene
+	if scene == null:
+		return
+
+	for local_position in _rear_wheel_local_positions:
+		var world_position := to_global(local_position + Vector3(0.0, 0.02, 0.15))
+		var dust_color := Color(0.49, 0.40, 0.28, 0.18 + intensity * 0.24)
+		_spawn_transient_puff(
+			scene,
+			world_position,
+			dust_color,
+			0.20 + intensity * 0.15,
+			lerpf(0.38, 0.72, intensity),
+			lerpf(2.3, 4.0, intensity),
+			0.92
+		)
+
+func _spawn_transient_puff(
+	scene: Node,
+	world_position: Vector3,
+	color: Color,
+	base_radius: float,
+	rise: float,
+	end_scale: float,
+	lifetime: float
+) -> void:
 	var puff := MeshInstance3D.new()
 	var sphere := SphereMesh.new()
-	sphere.radius = 0.18 + intensity * 0.15
-	sphere.height = sphere.radius * 2.0
+	sphere.radius = base_radius
+	sphere.height = base_radius * 2.0
+	sphere.radial_segments = 8
+	sphere.rings = 5
 	puff.mesh = sphere
 
 	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(0.82, 0.85, 0.86, 0.18 + intensity * 0.30)
+	material.albedo_color = color
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	puff.material_override = material
 
 	scene.add_child(puff)
-	var rear := to_global(Vector3(0.0, 0.25, 1.35))
-	puff.global_position = rear
+	puff.global_position = world_position
+	var phase := float(Time.get_ticks_msec() % 1000) * 0.001
+	var side_drift := Vector3(
+		sin(phase * 7.0) * 0.32,
+		rise,
+		cos(phase * 5.0) * 0.24
+	)
 
 	var tween := create_tween()
 	tween.set_parallel(true)
-	tween.tween_property(puff, "scale", Vector3.ONE * lerpf(2.0, 3.4, intensity), 0.70)
-	tween.tween_property(puff, "global_position:y", rear.y + 0.75, 0.70)
-	tween.tween_property(material, "albedo_color:a", 0.0, 0.70)
+	tween.tween_property(puff, "scale", Vector3.ONE * end_scale, lifetime)
+	tween.tween_property(puff, "global_position", world_position + side_drift, lifetime)
+	tween.tween_property(material, "albedo_color:a", 0.0, lifetime)
 	tween.chain().tween_callback(puff.queue_free)
+
+func _build_visual_details() -> void:
+	_visual_detail_rig = Node3D.new()
+	_visual_detail_rig.name = "VehicleDetailRig"
+	add_child(_visual_detail_rig)
+
+	_headlight_material = StandardMaterial3D.new()
+	_headlight_material.albedo_color = Color("#fff4d8")
+	_headlight_material.roughness = 0.12
+	_headlight_material.metallic = 0.08
+	_headlight_material.emission_enabled = true
+	_headlight_material.emission = Color("#fff0bd")
+	_headlight_material.emission_energy_multiplier = 1.8
+
+	_brake_light_material = StandardMaterial3D.new()
+	_brake_light_material.albedo_color = Color("#8f101d")
+	_brake_light_material.roughness = 0.18
+	_brake_light_material.metallic = 0.06
+	_brake_light_material.emission_enabled = true
+	_brake_light_material.emission = Color("#ff2438")
+	_brake_light_material.emission_energy_multiplier = 0.75
+
+	var carbon := RaceCarVisual3D.material(Color("#0d1116"), 0.42, 0.22)
+	for side in [-1.0, 1.0]:
+		_visual_detail_rig.add_child(
+			RaceCarVisual3D.box(
+				Vector3(0.42, 0.095, 0.055),
+				Vector3(0.43 * side, 0.54, -1.49),
+				_headlight_material
+			)
+		)
+		_visual_detail_rig.add_child(
+			RaceCarVisual3D.box(
+				Vector3(0.38, 0.085, 0.055),
+				Vector3(0.45 * side, 0.52, 1.49),
+				_brake_light_material
+			)
+		)
+
+	# A compact center rain/brake light and a low diffuser edge make the rear
+	# silhouette readable during braking and drift without replacing the GT mesh.
+	_visual_detail_rig.add_child(
+		RaceCarVisual3D.box(
+			Vector3(0.18, 0.07, 0.045),
+			Vector3(0.0, 0.45, 1.51),
+			_brake_light_material
+		)
+	)
+	_visual_detail_rig.add_child(
+		RaceCarVisual3D.box(
+			Vector3(1.44, 0.055, 0.12),
+			Vector3(0.0, 0.19, 1.47),
+			carbon
+		)
+	)
 
 func _build_effects() -> void:
 	_skid_root = Node3D.new()

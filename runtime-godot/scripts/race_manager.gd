@@ -29,6 +29,7 @@ var _drift_label: Label
 var _status_label: Label
 var _timing_label: Label
 var _resources_label: Label
+var _rpm_bar: ProgressBar
 
 func _ready() -> void:
 	_build_hud()
@@ -82,7 +83,10 @@ func _process(_delta: float) -> void:
 		int(player.engine_rpm),
 		"  SHIFT" if player.is_shifting else ""
 	]
-	_drift_label.text = "SLIP %4.1f°  %3d%%" % [
+	if _rpm_bar:
+		_rpm_bar.max_value = player.redline_rpm
+		_rpm_bar.value = player.engine_rpm
+	_drift_label.text = "SLIP %4.1f°   DRIFT %3d%%" % [
 		absf(player.vehicle_slip_angle_deg),
 		int(player.drift_intensity * 100.0)
 	]
@@ -99,9 +103,7 @@ SECTOR %.3fs" % [
 		last_sector_time
 	]
 
-	_resources_label.text = "FUEL %3d%%
-TIRES %3d%%
-DMG %3d%%" % [
+	_resources_label.text = "FUEL %3d%%   TIRES %3d%%   DMG %3d%%" % [
 		int((player.fuel_liters / maxf(0.001, player.fuel_capacity_liters)) * 100.0),
 		int(player.tire_health * 100.0),
 		int(player.damage * 100.0)
@@ -163,65 +165,133 @@ func _make_label(text_value: String, font_size: int) -> Label:
 	var label := Label.new()
 	label.text = text_value
 	label.add_theme_font_size_override("font_size", font_size)
-	label.add_theme_color_override("font_color", Color.WHITE)
-	label.add_theme_color_override("font_shadow_color", Color(0.02, 0.03, 0.04, 0.9))
-	label.add_theme_constant_override("shadow_offset_x", 3)
-	label.add_theme_constant_override("shadow_offset_y", 3)
+	label.add_theme_color_override("font_color", Color("#f5f4ef"))
+	label.add_theme_color_override("font_shadow_color", Color(0.01, 0.015, 0.02, 0.82))
+	label.add_theme_constant_override("shadow_offset_x", 2)
+	label.add_theme_constant_override("shadow_offset_y", 2)
 	return label
+
+func _make_hud_panel(position_value: Vector2, size_value: Vector2, accent: Color) -> Panel:
+	var panel := Panel.new()
+	panel.position = position_value
+	panel.size = size_value
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.025, 0.035, 0.045, 0.76)
+	style.border_color = Color(0.62, 0.68, 0.72, 0.24)
+	style.set_border_width_all(1)
+	style.corner_radius_top_left = 10
+	style.corner_radius_top_right = 10
+	style.corner_radius_bottom_left = 10
+	style.corner_radius_bottom_right = 10
+	style.shadow_color = Color(0.0, 0.0, 0.0, 0.34)
+	style.shadow_size = 8
+	panel.add_theme_stylebox_override("panel", style)
+
+	var accent_bar := ColorRect.new()
+	accent_bar.color = accent
+	accent_bar.position = Vector2(0, 0)
+	accent_bar.size = Vector2(4, size_value.y)
+	accent_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(accent_bar)
+	return panel
+
+func _make_rpm_bar() -> ProgressBar:
+	var bar := ProgressBar.new()
+	bar.show_percentage = false
+	bar.min_value = 0.0
+	bar.max_value = 7600.0
+	bar.value = 1050.0
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0.10, 0.12, 0.14, 0.95)
+	bg.corner_radius_top_left = 4
+	bg.corner_radius_top_right = 4
+	bg.corner_radius_bottom_left = 4
+	bg.corner_radius_bottom_right = 4
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = Color("#e83d48")
+	fill.corner_radius_top_left = 4
+	fill.corner_radius_top_right = 4
+	fill.corner_radius_bottom_left = 4
+	fill.corner_radius_bottom_right = 4
+	bar.add_theme_stylebox_override("background", bg)
+	bar.add_theme_stylebox_override("fill", fill)
+	return bar
 
 func _build_hud() -> void:
 	var layer := CanvasLayer.new()
 	layer.layer = 20
 	add_child(layer)
 
-	_position_label = _make_label("1st", 48)
-	_position_label.position = Vector2(28, 20)
+	var left_panel := _make_hud_panel(Vector2(18, 18), Vector2(286, 184), Color("#e83d48"))
+	left_panel.name = "RaceInfoPanel"
+	layer.add_child(left_panel)
+	var right_panel := _make_hud_panel(Vector2(1000, 18), Vector2(262, 210), Color("#2f7fff"))
+	right_panel.name = "VehicleInfoPanel"
+	layer.add_child(right_panel)
+	var drift_panel := _make_hud_panel(Vector2(18, 650), Vector2(220, 46), Color("#f0c541"))
+	drift_panel.name = "DriftPanel"
+	layer.add_child(drift_panel)
+	var controls_panel := _make_hud_panel(Vector2(350, 664), Vector2(580, 34), Color("#58636c"))
+	controls_panel.name = "ControlsPanel"
+	layer.add_child(controls_panel)
+
+	_position_label = _make_label("1st", 44)
+	_position_label.position = Vector2(34, 24)
 	layer.add_child(_position_label)
 
-	_lap_label = _make_label("LAP 1/%d · S1" % total_laps, 22)
-	_lap_label.position = Vector2(32, 78)
+	_lap_label = _make_label("LAP 1/%d · S1" % total_laps, 18)
+	_lap_label.position = Vector2(38, 78)
 	layer.add_child(_lap_label)
-
-	_speed_label = _make_label("000 km/h", 28)
-	_speed_label.position = Vector2(1050, 28)
-	layer.add_child(_speed_label)
-
-	var controls := _make_label("W ACCEL | S BRAKE/REVERSE | A/D STEER | SPACE BOOST | E PIT | R REPLAY", 13)
-	controls.position = Vector2(720, 68)
-	layer.add_child(controls)
-
-	_gear_label = _make_label("1", 52)
-	_gear_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_gear_label.position = Vector2(1160, 176)
-	_gear_label.size = Vector2(80, 64)
-	layer.add_child(_gear_label)
-
-	_rpm_label = _make_label("1050 RPM", 14)
-	_rpm_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_rpm_label.position = Vector2(1010, 236)
-	_rpm_label.size = Vector2(230, 26)
-	layer.add_child(_rpm_label)
-
-	_drift_label = _make_label("SLIP 0.0°   0%", 13)
-	_drift_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_drift_label.position = Vector2(1000, 262)
-	_drift_label.size = Vector2(240, 24)
-	layer.add_child(_drift_label)
 
 	_timing_label = _make_label("LAP 0:00.000
 BEST --:--.---
-SECTOR 0.000s", 16)
-	_timing_label.position = Vector2(28, 112)
+SECTOR 0.000s", 14)
+	_timing_label.position = Vector2(38, 108)
 	layer.add_child(_timing_label)
 
-	_resources_label = _make_label("FUEL 100%
-TIRES 100%
-DMG   0%", 16)
-	_resources_label.position = Vector2(1080, 110)
+	_speed_label = _make_label("000 km/h", 30)
+	_speed_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_speed_label.position = Vector2(1018, 26)
+	_speed_label.size = Vector2(214, 40)
+	layer.add_child(_speed_label)
+
+	_gear_label = _make_label("1", 58)
+	_gear_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_gear_label.position = Vector2(1138, 64)
+	_gear_label.size = Vector2(92, 70)
+	layer.add_child(_gear_label)
+
+	_rpm_label = _make_label("1050 RPM", 13)
+	_rpm_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_rpm_label.position = Vector2(1020, 132)
+	_rpm_label.size = Vector2(210, 22)
+	layer.add_child(_rpm_label)
+
+	_rpm_bar = _make_rpm_bar()
+	_rpm_bar.name = "RPMBar"
+	_rpm_bar.position = Vector2(1022, 158)
+	_rpm_bar.size = Vector2(208, 10)
+	layer.add_child(_rpm_bar)
+
+	_resources_label = _make_label("FUEL 100%   TIRES 100%   DMG 0%", 13)
+	_resources_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_resources_label.position = Vector2(1018, 182)
+	_resources_label.size = Vector2(214, 28)
 	layer.add_child(_resources_label)
 
-	_status_label = _make_label("", 34)
+	_drift_label = _make_label("SLIP 0.0°   DRIFT 0%", 14)
+	_drift_label.position = Vector2(32, 661)
+	_drift_label.size = Vector2(196, 24)
+	layer.add_child(_drift_label)
+
+	var controls := _make_label("W/S DRIVE  ·  A/D STEER  ·  SPACE BOOST  ·  E PIT  ·  R REPLAY", 12)
+	controls.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	controls.position = Vector2(364, 671)
+	controls.size = Vector2(552, 20)
+	layer.add_child(controls)
+
+	_status_label = _make_label("", 30)
 	_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_status_label.position = Vector2(440, 28)
-	_status_label.size = Vector2(400, 50)
+	_status_label.position = Vector2(440, 24)
+	_status_label.size = Vector2(400, 44)
 	layer.add_child(_status_label)

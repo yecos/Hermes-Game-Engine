@@ -7,6 +7,7 @@ var ai_racers: Array[AIRacer3D] = []
 var race_manager: RaceManager3D
 var runtime_bridge: HermesRuntimeBridge
 var replay_manager: ReplayManager3D
+var _animated_flags: Array[Node3D] = []
 
 func _ready() -> void:
 	_register_input_actions()
@@ -20,6 +21,16 @@ func _ready() -> void:
 	_spawn_replay_manager()
 	_spawn_runtime_bridge()
 	print("HGE_GODOT_RUNTIME_READY")
+
+func _process(_delta: float) -> void:
+	var clock := Time.get_ticks_msec() * 0.001
+	for i in range(_animated_flags.size()):
+		var flag := _animated_flags[i]
+		if not is_instance_valid(flag):
+			continue
+		var phase := clock * (2.8 + float(i % 3) * 0.22) + float(i) * 1.37
+		flag.rotation.z = sin(phase) * 0.12
+		flag.rotation.y = sin(phase * 0.71) * 0.08
 
 func _register_input_actions() -> void:
 	_add_key("accelerate", KEY_W)
@@ -95,6 +106,11 @@ func _build_environment() -> void:
 	sun.light_color = Color("#fff2d3")
 	sun.light_energy = 1.45
 	sun.shadow_enabled = true
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+	sun.directional_shadow_max_distance = 260.0
+	sun.shadow_blur = 1.15
+	sun.shadow_bias = 0.055
+	sun.shadow_normal_bias = 1.35
 	add_child(sun)
 
 	var terrain := TerrainBuilder3D.new()
@@ -180,6 +196,7 @@ func _rebuild_safe_trackside() -> void:
 	if track == null:
 		return
 
+	_animated_flags.clear()
 	var old := get_node_or_null("SafeTrackside")
 	if old:
 		old.free()
@@ -196,6 +213,7 @@ func _rebuild_safe_trackside() -> void:
 	_build_sector_landmarks(root)
 	_build_distant_landscape(root)
 	_build_shrub_clusters(root)
+	_build_crowd_clusters(root)
 
 	# Spectator zones sit at distinct parts of the lap instead of following the
 	# road continuously. This gives the circuit recognizable visual sectors.
@@ -536,6 +554,16 @@ func _build_sector_landmarks(root: Node3D) -> void:
 		_add_trackside_box(hut, "Rail", Vector3(3.3, 0.12, 0.12), Vector3(0.0, 0.85, -1.70), dark)
 		_create_dual_label(hut, "M%d" % (i + 1), Vector3(0.0, 2.31, -1.40), 30, 0.014)
 
+		var flag_pivot := Node3D.new()
+		flag_pivot.name = "MarshalFlag"
+		flag_pivot.position = Vector3(1.65, 2.15, -0.95)
+		hut.add_child(flag_pivot)
+		_animated_flags.append(flag_pivot)
+		_add_trackside_box(flag_pivot, "Pole", Vector3(0.06, 1.45, 0.06), Vector3(0.0, -0.20, 0.0), dark)
+		var flag_color := Color("#f4d447") if i % 3 != 1 else Color("#e33d49")
+		var flag_material := _make_trackside_material(flag_color, 0.76, 0.0)
+		_add_trackside_box(flag_pivot, "Flag", Vector3(0.88, 0.48, 0.035), Vector3(0.46, 0.28, 0.0), flag_material)
+
 func _create_sector_bridge(
 	root: Node3D,
 	ratio: float,
@@ -644,6 +672,70 @@ func _build_shrub_clusters(root: Node3D) -> void:
 	instance.visibility_range_end = 150.0
 	instance.visibility_range_end_margin = 20.0
 	root.add_child(instance)
+
+func _build_crowd_clusters(root: Node3D) -> void:
+	var crowd_root := Node3D.new()
+	crowd_root.name = "CrowdClusters"
+	root.add_child(crowd_root)
+
+	var palette := [
+		Color("#d94a52"),
+		Color("#3277c9"),
+		Color("#e7c84b")
+	]
+	var transforms_by_color: Array[Array] = [[], [], []]
+	var stands := [
+		[0.025, -1.0, 10.0],
+		[0.175, 1.0, 12.5],
+		[0.285, 1.0, 11.5],
+		[0.515, -1.0, 12.0],
+		[0.680, -1.0, 13.0],
+		[0.805, 1.0, 10.5]
+	]
+
+	for stand_index in range(stands.size()):
+		var ratio := float(stands[stand_index][0])
+		var side := float(stands[stand_index][1])
+		var clearance := float(stands[stand_index][2])
+		var anchor := _trackside_anchor(ratio, side, clearance + 0.8, false)
+		if not bool(anchor.get("valid", false)):
+			continue
+		var base: Transform3D = anchor.transform
+
+		for row in range(4):
+			for column in range(8):
+				var local_x := -3.2 + float(column) * 0.92
+				var local_z := -1.1 + float(row) * 0.72
+				var local_y := 0.55 + float(row) * 0.38
+				var person := base
+				person.origin = base * Vector3(local_x, local_y, local_z)
+				var height_scale := 0.88 + float((column + row * 3) % 4) * 0.045
+				person.basis = base.basis.scaled(Vector3(0.92, height_scale, 0.92))
+				var color_index := (stand_index + row + column) % 3
+				transforms_by_color[color_index].append(person)
+
+	for color_index in range(3):
+		var transforms: Array = transforms_by_color[color_index]
+		if transforms.is_empty():
+			continue
+		var person_mesh := BoxMesh.new()
+		person_mesh.size = Vector3(0.27, 0.72, 0.23)
+		var person_material := _make_trackside_material(palette[color_index], 0.84, 0.0)
+		person_mesh.material = person_material
+
+		var multi := MultiMesh.new()
+		multi.transform_format = MultiMesh.TRANSFORM_3D
+		multi.mesh = person_mesh
+		multi.instance_count = transforms.size()
+		for i in range(transforms.size()):
+			multi.set_instance_transform(i, transforms[i])
+
+		var crowd := MultiMeshInstance3D.new()
+		crowd.name = "CrowdColor%d" % (color_index + 1)
+		crowd.multimesh = multi
+		crowd.visibility_range_end = 190.0
+		crowd.visibility_range_end_margin = 24.0
+		crowd_root.add_child(crowd)
 
 func _build_scenery() -> void:
 	var tree_positions := [

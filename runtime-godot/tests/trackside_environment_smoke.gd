@@ -29,6 +29,7 @@ func _init() -> void:
 	assert(safe.get_node_or_null("SectorLandmarks") != null, "Sector landmarks missing")
 	assert(safe.get_node_or_null("DistantLandscape") != null, "Distant landscape missing")
 	assert(safe.get_node_or_null("ShrubClusters") != null, "Shrub clusters missing")
+	assert(safe.get_node_or_null("CrowdClusters") != null, "Crowd clusters missing")
 	assert(track.get_node_or_null("Guardrails/CornerPanelsRed") != null, "Red corner impact panels missing")
 	assert(track.get_node_or_null("Guardrails/CornerPanelsWhite") != null, "White corner impact panels missing")
 
@@ -59,6 +60,9 @@ func _init() -> void:
 		flood_count += _count_named(node, "FloodLight")
 	assert(flood_count >= 8, "Functional floodlights missing")
 
+	var flag_count := _count_named(safe, "MarshalFlag")
+	assert(flag_count >= 5, "Animated marshal flags missing")
+
 	print(
 		"HGE_TRACKSIDE_ENV_OK props=", safe_props.size(),
 		" garages=", garage_count,
@@ -67,7 +71,8 @@ func _init() -> void:
 		" corner_safety=", corner_safety.get_child_count(),
 		" landmarks=", landmarks.get_child_count(),
 		" hills=", landscape.get_child_count(),
-		" floodlights=", flood_count
+		" floodlights=", flood_count,
+		" flags=", flag_count
 	)
 
 	world.queue_free()
