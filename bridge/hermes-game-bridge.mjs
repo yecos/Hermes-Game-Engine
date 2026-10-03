@@ -26,6 +26,22 @@ function getHermesKey() {
   return fs.readFileSync(keyPath, 'utf8').trim();
 }
 
+function originAllowed(origin) {
+  if (!origin) return true;
+  if (allowedOrigins.has(origin)) return true;
+
+  try {
+    const url = new URL(origin);
+    return (
+      url.protocol === 'https:' &&
+      url.hostname.startsWith('hermesgameengine-') &&
+      url.hostname.endsWith('.vercel.app')
+    );
+  } catch {
+    return false;
+  }
+}
+
 function corsHeaders(origin) {
   const headers = {
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -35,7 +51,7 @@ function corsHeaders(origin) {
     'Vary': 'Origin',
     'Cache-Control': 'no-store'
   };
-  if (origin && allowedOrigins.has(origin)) headers['Access-Control-Allow-Origin'] = origin;
+  if (origin && originAllowed(origin)) headers['Access-Control-Allow-Origin'] = origin;
   return headers;
 }
 
@@ -189,7 +205,7 @@ async function buildPlan({ prompt, tools, project, activeScene }) {
 
 const server = http.createServer(async (req, res) => {
   const origin = String(req.headers.origin || '');
-  if (origin && !allowedOrigins.has(origin)) {
+  if (!originAllowed(origin)) {
     return sendJson(res, 403, { error: 'Origin not allowed' }, '');
   }
 
