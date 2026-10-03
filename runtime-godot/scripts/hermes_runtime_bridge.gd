@@ -114,8 +114,62 @@ func _handle_line(peer: StreamPeerTCP, line: String) -> void:
 		"clear_runtime_assets":
 			_clear_runtime_assets()
 			_send(peer, {"ok": true, "spawned": 0})
+		"track_snapshot":
+			_send(peer, {"ok": true, "track": track.track_snapshot() if track else {}})
+		"set_track_point":
+			_send(peer, _set_track_point(payload))
+		"set_track_bank":
+			_send(peer, _set_track_bank(payload))
+		"replace_track":
+			_send(peer, _replace_track(payload))
+		"reset_track":
+			if track:
+				track.build_default_circuit()
+				_after_track_edit()
+			_send(peer, {"ok": true, "track": track.track_snapshot() if track else {}})
 		_:
 			_send(peer, {"ok": false, "error": "unknown_command", "command": command})
+
+func _set_track_point(payload: Dictionary) -> Dictionary:
+	if track == null:
+		return {"ok": false, "error": "track_unavailable"}
+	var index := int(payload.get("index", -1))
+	var snapshot := track.track_snapshot()
+	var points: Array = snapshot.get("points", [])
+	if index < 0 or index >= points.size():
+		return {"ok": false, "error": "invalid_track_index", "index": index}
+	var current: Dictionary = points[index]
+	var x := float(payload.get("x", current.get("x", 0.0)))
+	var z := float(payload.get("z", current.get("z", 0.0)))
+	var bank := float(payload.get("bank", current.get("bank", 0.0)))
+	var ok := track.set_control_point(index, x, z, bank)
+	if ok:
+		_after_track_edit()
+	return {"ok": ok, "track": track.track_snapshot()}
+
+func _set_track_bank(payload: Dictionary) -> Dictionary:
+	if track == null:
+		return {"ok": false, "error": "track_unavailable"}
+	var index := int(payload.get("index", -1))
+	var bank := float(payload.get("bank", 0.0))
+	var ok := track.set_bank(index, bank)
+	if ok:
+		_after_track_edit()
+	return {"ok": ok, "track": track.track_snapshot()}
+
+func _replace_track(payload: Dictionary) -> Dictionary:
+	if track == null:
+		return {"ok": false, "error": "track_unavailable"}
+	var points: Array = payload.get("points", [])
+	var ok := track.replace_control_points(points)
+	if ok:
+		_after_track_edit()
+	return {"ok": ok, "track": track.track_snapshot()}
+
+func _after_track_edit() -> void:
+	_reset_player()
+	if race_manager:
+		race_manager.reset_session()
 
 func _spawn_runtime_asset(payload: Dictionary) -> Dictionary:
 	var asset_name := String(payload.get("asset", ""))
@@ -136,6 +190,8 @@ func _spawn_runtime_asset(payload: Dictionary) -> Dictionary:
 	instance.position = Vector3(x, surface_y, z)
 	instance.scale = Vector3.ONE * scale_value
 	instance.rotation.y = deg_to_rad(rotation_value)
+	var lod_distance := 115.0 if asset_name == "grandstand" or asset_name == "light_mast" else 85.0
+	AssetLibrary3D.apply_lod(instance, lod_distance, 14.0)
 
 	var scene := get_tree().current_scene
 	if scene == null:
@@ -318,6 +374,13 @@ func _telemetry() -> Dictionary:
 		"format": "GLB/GLTF",
 		"available": RUNTIME_ASSETS,
 		"runtime_spawned": _runtime_assets.size()
+	}
+	payload["track_editor"] = {
+		"point_count": track.control_points.size() if track else 0,
+		"length": snappedf(track.get_length(), 0.1) if track else 0.0,
+		"banking": true,
+		"runoff": true,
+		"pit_lane": true
 	}
 	return payload
 

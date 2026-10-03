@@ -127,6 +127,8 @@ func _spawn_asset(
 	)
 	asset.scale = Vector3.ONE * scale_value
 	asset.rotation.y = deg_to_rad(rotation_degrees_y)
+	var lod_distance := 115.0 if asset_name == "grandstand" or asset_name == "light_mast" else 85.0
+	AssetLibrary3D.apply_lod(asset, lod_distance, 14.0)
 	add_child(asset)
 	return asset
 

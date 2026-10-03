@@ -135,7 +135,7 @@ func _physics_process(delta: float) -> void:
 
 	var surface_height := TerrainBuilder3D.height_at(global_position.x, global_position.z)
 	if track != null and track.is_on_track(global_position, 1.8):
-		surface_height = track.get_closest_world_point(global_position).y
+		surface_height = track.get_surface_height(global_position)
 	global_position.y = surface_height + ride_height
 	rotation.x = 0.0
 	rotation.z = 0.0
@@ -212,7 +212,8 @@ func _update_visuals(delta: float, steer_input: float, forward_speed: float) -> 
 		return
 
 	var speed_ratio := clampf(absf(forward_speed) / maxf(1.0, top_speed), 0.0, 1.0)
-	var target_roll := -steer_input * speed_ratio * 0.075
+	var bank_roll := deg_to_rad(track.get_bank_degrees_at_world(global_position)) if track != null else 0.0
+	var target_roll := bank_roll - steer_input * speed_ratio * 0.075
 	var target_pitch := clampf((_base_forward_speed - forward_speed) * 0.01, -0.035, 0.035)
 
 	_visual.rotation.z = lerpf(_visual.rotation.z, target_roll, 1.0 - exp(-8.0 * delta))
@@ -260,7 +261,7 @@ func _spawn_skid_marks() -> void:
 		var world_position := to_global(local_position)
 		var mark_height := TerrainBuilder3D.height_at(world_position.x, world_position.z)
 		if track != null and track.is_on_track(world_position, 1.2):
-			mark_height = track.get_closest_world_point(world_position).y
+			mark_height = track.get_surface_height(world_position)
 		marker.global_position = Vector3(world_position.x, mark_height + 0.025, world_position.z)
 		marker.global_rotation = Vector3(0.0, global_rotation.y, 0.0)
 		_skid_root.add_child(marker)

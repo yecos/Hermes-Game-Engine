@@ -75,3 +75,11 @@ static func car_wheels(root: Node) -> Array[Node3D]:
 		if node is Node3D:
 			wheels.append(node as Node3D)
 	return wheels
+
+static func apply_lod(root: Node, end_distance: float = 90.0, margin: float = 12.0) -> void:
+	if root is GeometryInstance3D:
+		var geometry := root as GeometryInstance3D
+		geometry.visibility_range_end = maxf(10.0, end_distance)
+		geometry.visibility_range_end_margin = maxf(1.0, margin)
+	for child in root.get_children():
+		apply_lod(child, end_distance, margin)

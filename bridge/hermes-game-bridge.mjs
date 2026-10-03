@@ -221,6 +221,12 @@ async function buildGodotPlan(prompt) {
     '{"command":"asset_inventory"}',
     '{"command":"spawn_asset","asset":"grandstand|light_mast|paddock_tent|service_van|tire_stack|track_cone|tree_lush","x":number,"z":number,"scale":number?,"rotation":number?}',
     '{"command":"clear_runtime_assets"}',
+    '{"command":"track_snapshot"}',
+    '{"command":"set_track_point","index":integer,"x":number?,"z":number?,"bank":number?}',
+    '{"command":"set_track_bank","index":integer,"bank":number}',
+    '{"command":"replace_track","points":[{"x":number,"z":number,"bank":number?}, ...]}',
+    '{"command":"reset_track"}',
+    'Track rules: 6..24 points, x/z -65..65, bank -16..16 degrees, avoid adjacent points closer than about 7m.',
     'For spawn_asset use x/z inside -70..70, scale 0.35..2.5 and rotation in degrees.',
     'Do not place props directly on the racing line unless explicitly requested.',
     'Do not invent keys or commands.',
@@ -251,7 +257,12 @@ async function buildGodotPlan(prompt) {
     'set_tuning',
     'asset_inventory',
     'spawn_asset',
-    'clear_runtime_assets'
+    'clear_runtime_assets',
+    'track_snapshot',
+    'set_track_point',
+    'set_track_bank',
+    'replace_track',
+    'reset_track'
   ]);
   if (!allowedCommands.has(plan?.command)) {
     throw new Error(`Godot planner returned unsupported command: ${plan?.command || 'missing'}`);
@@ -289,6 +300,36 @@ async function buildGodotPlan(prompt) {
     plan.z = Math.max(-70, Math.min(70, plan.z));
     if (plan.scale != null) plan.scale = Math.max(0.35, Math.min(2.5, Number(plan.scale)));
     if (plan.rotation != null) plan.rotation = Math.max(-360, Math.min(360, Number(plan.rotation)));
+  }
+
+  if (plan.command === 'set_track_point') {
+    if (!Number.isInteger(plan.index)) throw new Error('set_track_point requires integer index');
+    if (plan.x != null) plan.x = Math.max(-65, Math.min(65, Number(plan.x)));
+    if (plan.z != null) plan.z = Math.max(-65, Math.min(65, Number(plan.z)));
+    if (plan.bank != null) plan.bank = Math.max(-16, Math.min(16, Number(plan.bank)));
+  }
+
+  if (plan.command === 'set_track_bank') {
+    if (!Number.isInteger(plan.index) || typeof plan.bank !== 'number') {
+      throw new Error('set_track_bank requires integer index and numeric bank');
+    }
+    plan.bank = Math.max(-16, Math.min(16, plan.bank));
+  }
+
+  if (plan.command === 'replace_track') {
+    if (!Array.isArray(plan.points) || plan.points.length < 6 || plan.points.length > 24) {
+      throw new Error('replace_track requires 6..24 points');
+    }
+    plan.points = plan.points.map((point) => {
+      if (!point || typeof point.x !== 'number' || typeof point.z !== 'number') {
+        throw new Error('replace_track point requires numeric x/z');
+      }
+      return {
+        x: Math.max(-65, Math.min(65, point.x)),
+        z: Math.max(-65, Math.min(65, point.z)),
+        bank: Math.max(-16, Math.min(16, Number(point.bank || 0)))
+      };
+    });
   }
 
   const result = await godotCall(plan);
@@ -461,6 +502,11 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && req.url === '/godot/assets') {
       const result = await godotCall({ command: 'asset_inventory' });
+      return sendJson(res, 200, result, origin);
+    }
+
+    if (req.method === 'GET' && req.url === '/godot/track') {
+      const result = await godotCall({ command: 'track_snapshot' });
       return sendJson(res, 200, result, origin);
     }
 
