@@ -12,6 +12,7 @@ func _ready() -> void:
 	_register_input_actions()
 	_build_environment()
 	_build_track()
+	_rebuild_safe_trackside()
 	_spawn_player()
 	_spawn_ai()
 	_spawn_camera()
@@ -100,10 +101,6 @@ func _build_environment() -> void:
 	terrain.name = "RollingTerrain"
 	add_child(terrain)
 
-	_build_scenery()
-	_build_pit_complex()
-	_build_trackside_festival()
-
 func _set_env_if_exists(environment: Environment, property_name: String, value: Variant) -> void:
 	for info in environment.get_property_list():
 		if String(info.name) == property_name:
@@ -131,6 +128,76 @@ func _spawn_asset(
 	AssetLibrary3D.apply_lod(asset, lod_distance, 14.0)
 	add_child(asset)
 	return asset
+
+func _spawn_safe_trackside_asset(
+	root: Node3D,
+	asset_name: String,
+	ratio: float,
+	side: float,
+	extra_clearance: float,
+	scale_value: float = 1.0,
+	yaw_offset_degrees: float = 0.0
+) -> Node3D:
+	if track == null:
+		return null
+
+	var asset := AssetLibrary3D.instantiate_asset(asset_name)
+	if asset == null:
+		return null
+
+	var frame := track.get_world_transform_at_ratio(ratio)
+	var barrier_offset := track.get_barrier_offset(side, ratio)
+	var target := frame.origin + frame.basis.x * side * (barrier_offset + extra_clearance)
+	target.y = TerrainBuilder3D.height_at(target.x, target.z)
+
+	var forward := -frame.basis.z.normalized()
+	var yaw := atan2(forward.x, forward.z) + deg_to_rad(yaw_offset_degrees)
+
+	root.add_child(asset)
+	asset.global_position = target
+	asset.rotation.y = yaw
+	asset.scale = Vector3.ONE * scale_value
+
+	var lod_distance := 120.0 if asset_name == "grandstand" or asset_name == "light_mast" else 88.0
+	AssetLibrary3D.apply_lod(asset, lod_distance, 14.0)
+	return asset
+
+func _rebuild_safe_trackside() -> void:
+	if track == null:
+		return
+
+	var old := get_node_or_null("SafeTrackside")
+	if old:
+		old.free()
+
+	var root := Node3D.new()
+	root.name = "SafeTrackside"
+	add_child(root)
+
+	# Only large objects well outside the physical barrier envelope.
+	_spawn_safe_trackside_asset(root, "grandstand", 0.035, -1.0, 9.0, 1.08, 180.0)
+	_spawn_safe_trackside_asset(root, "service_van", 0.965, -1.0, 7.0, 0.88, 90.0)
+	_spawn_safe_trackside_asset(root, "paddock_tent", 0.12, 1.0, 8.0, 0.95, 90.0)
+	_spawn_safe_trackside_asset(root, "paddock_tent", 0.66, -1.0, 8.5, 0.92, -90.0)
+
+	for data in [
+		[0.04, -1.0],
+		[0.27, 1.0],
+		[0.51, -1.0],
+		[0.76, 1.0]
+	]:
+		_spawn_safe_trackside_asset(root, "light_mast", float(data[0]), float(data[1]), 5.0, 0.92, 0.0)
+
+	# Trees are distributed relative to the current Curve3D, never by fixed world coordinates.
+	for i in range(20):
+		var ratio := fposmod(0.015 + float(i) / 20.0, 1.0)
+		var side := -1.0 if i % 2 == 0 else 1.0
+		var extra := 7.0 + float(i % 4) * 2.4
+		_spawn_safe_trackside_asset(root, "tree_lush", ratio, side, extra, 0.82 + float(i % 3) * 0.12, float(i * 31))
+
+	# Small safety props remain outside the barrier, never on the racing surface.
+	_spawn_safe_trackside_asset(root, "tire_stack", 0.34, 1.0, 2.6, 0.9, 0.0)
+	_spawn_safe_trackside_asset(root, "tire_stack", 0.79, -1.0, 2.6, 0.9, 0.0)
 
 func _build_scenery() -> void:
 	var tree_positions := [
@@ -387,6 +454,8 @@ func _build_track() -> void:
 	track = TrackSpline.new()
 	track.name = "GrandCircuit"
 	add_child(track)
+	if not track.track_rebuilt.is_connected(_rebuild_safe_trackside):
+		track.track_rebuilt.connect(_rebuild_safe_trackside)
 
 func _spawn_player() -> void:
 	player = ArcadeCarController3D.new()
