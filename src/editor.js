@@ -1,7 +1,7 @@
 import { ProjectStore, createProject, migrateProject, ENTITY_PRESETS, TILE_TYPES, BEHAVIOR_PRESETS } from './project-store.js';
 import { ToolRegistry } from './tool-registry.js';
 import { PhaserRuntime } from './phaser-runtime.js';
-import { HermesAgent } from './hermes-agent.js';
+import { HermesAgent, DEFAULT_BRIDGE_ENDPOINT } from './hermes-agent.js';
 import { CloudClient } from './cloud-client.js';
 import { AssetGenerator } from './asset-generator.js';
 import { SceneTestAgent } from './test-agent.js';
@@ -40,6 +40,17 @@ function log(message, type = 'ok') {
   row.className = `log-${type}`;
   row.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
   consoleLog.prepend(row);
+}
+
+function setAgentStatus(info = null) {
+  const label = $('#agentMode');
+  if (!agent.endpoint || !info) {
+    label.textContent = agent.endpoint ? 'HERMES BRIDGE' : 'LOCAL PLANNER';
+    return;
+  }
+  const model = info.model ?? 'hermes-agent';
+  label.textContent = `HERMES LIVE · ${model}`;
+  label.title = info.provider ? `${info.provider} · ${model}` : model;
 }
 
 function renderScenes() {
@@ -229,12 +240,32 @@ $('#importInput').onchange = async (event) => {
   try { store.replace(JSON.parse(await file.text())); renderAll(); log(`Importado: ${file.name}`); } catch { log('No pude importar ese JSON.', 'warn'); }
   event.target.value = '';
 };
-$('#connectHermes').onclick = () => {
-  const endpoint = window.prompt('Endpoint HTTP de Hermes. Recibe {prompt, tools, project, activeScene} y devuelve {message, calls}.', agent.endpoint);
+$('#connectHermes').onclick = async () => {
+  const endpoint = window.prompt(
+    'Endpoint local de Hermes Game Bridge.',
+    agent.endpoint || DEFAULT_BRIDGE_ENDPOINT
+  );
   if (endpoint === null) return;
-  agent.setEndpoint(endpoint);
-  $('#agentMode').textContent = agent.endpoint ? 'HERMES GATEWAY' : 'LOCAL PLANNER';
-  log(agent.endpoint ? `Hermes conectado: ${agent.endpoint}` : 'Usando planner local.', 'ai');
+  if (!endpoint.trim()) {
+    agent.setEndpoint('');
+    setAgentStatus();
+    log('Usando planner local.', 'ai');
+    return;
+  }
+
+  $('#agentBusy').classList.add('visible');
+  try {
+    agent.setEndpoint(endpoint.trim());
+    const info = await agent.testConnection();
+    setAgentStatus(info);
+    log(`Hermes conectado · ${info.provider ?? 'hermes'} · ${info.model ?? 'hermes-agent'}`, 'ai');
+  } catch (error) {
+    agent.setEndpoint('');
+    setAgentStatus();
+    log(`No pude conectar Hermes: ${error.message}`, 'warn');
+  } finally {
+    $('#agentBusy').classList.remove('visible');
+  }
 };
 $('#generateAssetBtn').onclick = async () => {
   const prompt = window.prompt('Describe el sprite o tile que quieres generar', 'robot cyberpunk pixel art, transparent background');
@@ -268,6 +299,7 @@ async function submitPrompt(text) {
     const result = await agent.run(text);
     addMessage(result.message, 'ai');
     renderAll();
+    if (agent.endpoint) setAgentStatus(agent.connection);
     log(`Hermes ejecutó ${result.calls.length} tool call${result.calls.length === 1 ? '' : 's'}.`, 'ai');
   } catch (error) { addMessage(`Error del agente: ${error.message}`, 'ai'); log(error.message, 'warn'); }
   finally { $('#agentBusy').classList.remove('visible'); }
@@ -300,6 +332,22 @@ window.addEventListener('hge:runtime-ready', () => {
 window.addEventListener('hge:collect', (event) => log(`Collectible: ${event.detail.entity.name}`, 'ai'));
 
 renderAll();
-$('#agentMode').textContent = agent.endpoint ? 'HERMES GATEWAY' : 'LOCAL PLANNER';
+setAgentStatus();
 log('Hermes Game Engine V0.3 inicializando…', 'ai');
-cloud.health().then(() => { $('#cloudState').textContent = 'NEON READY'; $('#cloudState').classList.add('online'); }).catch(() => { $('#cloudState').textContent = 'LOCAL'; });
+
+agent.autoDetect().then((info) => {
+  if (!info) {
+    setAgentStatus();
+    log('Hermes local no detectado · planner local disponible.', 'warn');
+    return;
+  }
+  setAgentStatus(info);
+  log(`Hermes LIVE · ${info.provider ?? 'hermes'} · ${info.model ?? 'hermes-agent'}`, 'ai');
+}).catch(() => setAgentStatus());
+
+cloud.health().then(() => {
+  $('#cloudState').textContent = 'NEON READY';
+  $('#cloudState').classList.add('online');
+}).catch(() => {
+  $('#cloudState').textContent = 'LOCAL';
+});

@@ -104,6 +104,36 @@ PhaserRuntime
 SceneTestAgent ──► reports / hge_test_runs
 ```
 
+## Hermes local bridge
+
+El editor web puede detectar automáticamente un Hermes Agent que esté corriendo en la misma máquina. El bridge se mantiene local y nunca publica la clave del API server en Vercel ni en el navegador.
+
+Requisitos de Hermes:
+
+```yaml
+platforms:
+  api_server:
+    enabled: true
+    host: 127.0.0.1
+    port: 8642
+
+platform_toolsets:
+  api_server: []
+```
+
+El bridge se inicia con:
+
+```bash
+npm run bridge
+```
+
+y escucha únicamente en `127.0.0.1:8643`. Sus rutas son:
+
+- `GET /health` — verifica Hermes y devuelve el proveedor/modelo activos.
+- `POST /plan` — recibe el estado del proyecto y devuelve `{message,calls}`.
+
+En Windows puede registrarse como tarea de inicio de sesión. El navegador conecta al bridge local, el bridge llama al API server de Hermes y Hermes usa el modelo efectivo de su perfil activo. No se fija un proveedor/modelo dentro del Game Engine.
+
 ## Próximo objetivo
 
 V0.4: autenticación multiusuario, sprites renderizados como texturas Phaser, editor visual de behaviors, colaboración/multiplayer y un test agent con navegación/capturas sobre el runtime real.
