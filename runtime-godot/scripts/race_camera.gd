@@ -1,13 +1,13 @@
 class_name RaceCamera3D
 extends Camera3D
 
-@export var height: float = 15.5
-@export var follow_distance: float = 12.5
-@export var look_ahead: float = 5.0
+@export var height: float = 12.2
+@export var follow_distance: float = 16.8
+@export var look_ahead: float = 6.2
 @export var position_smoothing: float = 5.5
 @export var target_smoothing: float = 7.0
-@export var base_fov: float = 38.0
-@export var speed_fov_gain: float = 5.0
+@export var base_fov: float = 34.0
+@export var speed_fov_gain: float = 4.0
 
 var target: ArcadeCarController3D
 var _smoothed_target: Vector3

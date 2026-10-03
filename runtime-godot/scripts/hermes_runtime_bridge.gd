@@ -6,10 +6,19 @@ extends Node
 var player: ArcadeCarController3D
 var track: TrackSpline
 var race_manager: RaceManager3D
+var replay_manager: ReplayManager3D
 
 var _server := TCPServer.new()
 var _clients: Array[StreamPeerTCP] = []
 var _buffers: Dictionary = {}
+
+var _test_running: bool = false
+var _test_target_laps: int = 0
+var _test_started_at: int = 0
+var _test_start_fuel: float = 0.0
+var _test_sample_timer: float = 0.0
+var _test_samples: Array[Dictionary] = []
+var _last_test_summary: Dictionary = {}
 
 func _ready() -> void:
 	var error := _server.listen(port, "127.0.0.1")
@@ -18,7 +27,7 @@ func _ready() -> void:
 	else:
 		push_error("Hermes runtime bridge failed to listen on %d: %s" % [port, error_string(error)])
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	while _server.is_connection_available():
 		var peer := _server.take_connection()
 		if peer:
@@ -51,6 +60,8 @@ func _process(_delta: float) -> void:
 
 		_buffers[peer] = buffer
 
+	_update_test_run(delta)
+
 func _handle_line(peer: StreamPeerTCP, line: String) -> void:
 	var payload = JSON.parse_string(line)
 	if typeof(payload) != TYPE_DICTIONARY:
@@ -66,18 +77,24 @@ func _handle_line(peer: StreamPeerTCP, line: String) -> void:
 			_apply_tuning(values)
 			_send(peer, {"ok": true, "telemetry": _telemetry()})
 		"reset_car":
-			if player and track:
-				var spawn := track.get_world_transform_at_ratio(0.018)
-				spawn.origin += spawn.basis.x * -1.4 + Vector3.UP * player.ride_height
-				player.global_transform = spawn
-				player.velocity = Vector3.ZERO
-			_send(peer, {"ok": true})
-		"service_car":
-			if player:
-				player.fuel_liters = player.fuel_capacity_liters
-				player.tire_health = 1.0
-				player.damage = 0.0
+			_reset_player()
 			_send(peer, {"ok": true, "telemetry": _telemetry()})
+		"service_car":
+			_service_player()
+			_send(peer, {"ok": true, "telemetry": _telemetry()})
+		"start_test_run":
+			var laps := clampi(int(payload.get("laps", 1)), 1, 3)
+			_start_test_run(laps)
+			_send(peer, {"ok": true, "test": _test_status()})
+		"stop_test_run":
+			_finish_test_run(false, "stopped")
+			_send(peer, {"ok": true, "test": _test_status()})
+		"test_summary":
+			_send(peer, {"ok": true, "test": _test_status()})
+		"start_replay":
+			if replay_manager:
+				replay_manager.start_replay()
+			_send(peer, {"ok": true})
 		_:
 			_send(peer, {"ok": false, "error": "unknown_command", "command": command})
 
@@ -102,6 +119,125 @@ func _apply_tuning(values: Dictionary) -> void:
 		var value := clampf(float(values[key]), limits.x, limits.y)
 		player.set(key_string, value)
 
+func _reset_player() -> void:
+	if player == null or track == null:
+		return
+
+	if replay_manager and replay_manager.replay_active:
+		replay_manager.stop_replay()
+
+	player.autopilot_enabled = false
+	player.replay_mode = false
+	player.input_enabled = true
+	var spawn := track.get_world_transform_at_ratio(0.018)
+	spawn.origin += spawn.basis.x * -1.4 + Vector3.UP * player.ride_height
+	player.global_transform = spawn
+	player.velocity = Vector3.ZERO
+	player.speed_kmh = 0.0
+
+	if race_manager:
+		race_manager.reset_session()
+
+func _service_player() -> void:
+	if player == null:
+		return
+	player.fuel_liters = player.fuel_capacity_liters
+	player.tire_health = 1.0
+	player.damage = 0.0
+
+func _start_test_run(laps: int) -> void:
+	if player == null or track == null or race_manager == null:
+		return
+
+	_reset_player()
+	_service_player()
+	race_manager.reset_session()
+
+	_test_running = true
+	_test_target_laps = laps
+	_test_started_at = Time.get_ticks_msec()
+	_test_start_fuel = player.fuel_liters
+	_test_sample_timer = 0.0
+	_test_samples.clear()
+	_last_test_summary = {}
+
+	player.input_enabled = false
+	player.autopilot_enabled = true
+
+func _update_test_run(delta: float) -> void:
+	if not _test_running or player == null or race_manager == null:
+		return
+
+	_test_sample_timer += delta
+	if _test_sample_timer >= 0.10:
+		_test_sample_timer -= 0.10
+		_test_samples.append({
+			"speed": player.speed_kmh,
+			"slip": player.slip_amount,
+			"offroad": player.is_offroad,
+			"damage": player.damage,
+			"fuel": player.fuel_liters,
+			"tire": player.tire_health
+		})
+
+	var elapsed := float(Time.get_ticks_msec() - _test_started_at) / 1000.0
+	if race_manager.player_lap >= _test_target_laps:
+		_finish_test_run(true, "completed")
+	elif elapsed > 75.0:
+		_finish_test_run(false, "timeout")
+
+func _finish_test_run(completed: bool, reason: String) -> void:
+	if not _test_running:
+		return
+
+	_test_running = false
+	if player:
+		player.autopilot_enabled = false
+		player.input_enabled = true
+		player.velocity = Vector3.ZERO
+		player.speed_kmh = 0.0
+
+	var count := _test_samples.size()
+	var speed_sum := 0.0
+	var slip_sum := 0.0
+	var max_speed := 0.0
+	var offroad_samples := 0
+
+	for sample in _test_samples:
+		var speed := float(sample.get("speed", 0.0))
+		var slip := float(sample.get("slip", 0.0))
+		speed_sum += speed
+		slip_sum += slip
+		max_speed = maxf(max_speed, speed)
+		if bool(sample.get("offroad", false)):
+			offroad_samples += 1
+
+	var elapsed := float(Time.get_ticks_msec() - _test_started_at) / 1000.0
+	_last_test_summary = {
+		"completed": completed,
+		"reason": reason,
+		"target_laps": _test_target_laps,
+		"laps_completed": race_manager.player_lap if race_manager else 0,
+		"elapsed_seconds": snappedf(elapsed, 0.01),
+		"samples": count,
+		"average_speed_kmh": snappedf(speed_sum / maxf(1.0, float(count)), 0.1),
+		"max_speed_kmh": snappedf(max_speed, 0.1),
+		"average_slip": snappedf(slip_sum / maxf(1.0, float(count)), 0.001),
+		"offroad_ratio": snappedf(float(offroad_samples) / maxf(1.0, float(count)), 0.001),
+		"best_lap_seconds": snappedf(race_manager.best_lap_time if race_manager else 0.0, 0.001),
+		"fuel_used_liters": snappedf(_test_start_fuel - (player.fuel_liters if player else _test_start_fuel), 0.01),
+		"tire_remaining": snappedf(player.tire_health if player else 1.0, 0.001),
+		"damage": snappedf(player.damage if player else 0.0, 0.001)
+	}
+
+func _test_status() -> Dictionary:
+	return {
+		"running": _test_running,
+		"target_laps": _test_target_laps,
+		"current_lap": race_manager.player_lap if race_manager else 0,
+		"summary": _last_test_summary
+	}
+
 func _telemetry() -> Dictionary:
 	if player == null:
 		return {}
@@ -112,6 +248,8 @@ func _telemetry() -> Dictionary:
 		payload["position"] = race_manager.current_position
 		payload["sector"] = race_manager.current_sector
 		payload["best_lap"] = race_manager.best_lap_time
+	payload["test_run"] = _test_status()
+	payload["replay_active"] = replay_manager.replay_active if replay_manager else false
 	return payload
 
 func _send(peer: StreamPeerTCP, payload: Dictionary) -> void:

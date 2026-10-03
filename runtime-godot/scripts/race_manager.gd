@@ -41,6 +41,8 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	if player == null or track == null:
 		return
+	if player.replay_mode:
+		return
 
 	var now := Time.get_ticks_msec()
 	var ratio := track.get_progress_ratio(player.global_position)
@@ -103,6 +105,19 @@ DMG %3d%%" % [
 		_status_label.text = "OFF ROAD"
 	else:
 		_status_label.text = ""
+
+func reset_session() -> void:
+	player_lap = 0
+	current_position = 1
+	current_sector = 1
+	best_lap_time = 0.0
+	current_lap_time = 0.0
+	last_lap_time = 0.0
+	last_sector_time = 0.0
+	_last_ratio = track.get_progress_ratio(player.global_position) if track and player else 0.0
+	_last_sector = track.get_sector_index(player.global_position) if track and player else 1
+	_lap_started_at = Time.get_ticks_msec()
+	_sector_started_at = _lap_started_at
 
 func snapshot() -> Dictionary:
 	return {

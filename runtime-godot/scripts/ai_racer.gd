@@ -8,9 +8,14 @@ extends Node3D
 
 var track: TrackSpline
 var lap_count: int = 0
+var _visual: Node3D
+var _wheel_nodes: Array[Node3D] = []
 
 func _ready() -> void:
-	_build_visual()
+	var built: Dictionary = RaceCarVisual3D.build(self, body_color, Color("#f6f4ed"))
+	_visual = built.root as Node3D
+	for wheel in built.wheels:
+		_wheel_nodes.append(wheel as Node3D)
 
 func _process(delta: float) -> void:
 	if track == null or track.get_length() <= 0.0:
@@ -26,51 +31,14 @@ func _process(delta: float) -> void:
 	target_transform.origin += target_transform.basis.x * lane_offset
 	target_transform.origin += Vector3.UP * 0.48
 
-	global_transform = global_transform.interpolate_with(target_transform, clamp(delta * 9.0, 0.0, 1.0))
+	global_transform = global_transform.interpolate_with(target_transform, clampf(delta * 9.0, 0.0, 1.0))
+
+	for wheel in _wheel_nodes:
+		wheel.rotation.x += speed_mps * delta * 1.7
+
+	if _visual:
+		var corner_roll := sin(progress_ratio * TAU * 2.0 + lane_offset) * 0.025
+		_visual.rotation.z = lerpf(_visual.rotation.z, corner_roll, 1.0 - exp(-5.0 * delta))
 
 func total_progress() -> float:
 	return float(lap_count) + progress_ratio
-
-func _material(color: Color, roughness: float = 0.32) -> StandardMaterial3D:
-	var material := StandardMaterial3D.new()
-	material.albedo_color = color
-	material.roughness = roughness
-	material.metallic = 0.18
-	return material
-
-func _box(size: Vector3, position: Vector3, material: Material) -> MeshInstance3D:
-	var node := MeshInstance3D.new()
-	var mesh := BoxMesh.new()
-	mesh.size = size
-	node.mesh = mesh
-	node.position = position
-	node.material_override = material
-	return node
-
-func _build_visual() -> void:
-	var paint := _material(body_color, 0.24)
-	var glass := _material(Color("#1a2a3a"), 0.14)
-	var dark := _material(Color("#0c0f13"), 0.5)
-	var stripe := _material(Color("#f6f2e9"), 0.28)
-
-	add_child(_box(Vector3(1.45, 0.42, 2.75), Vector3(0, 0.42, 0), paint))
-	add_child(_box(Vector3(1.15, 0.38, 1.05), Vector3(0, 0.77, -0.18), glass))
-	add_child(_box(Vector3(0.25, 0.05, 2.25), Vector3(0, 0.68, -0.05), stripe))
-	add_child(_box(Vector3(1.48, 0.12, 0.18), Vector3(0, 0.65, 1.23), dark))
-
-	for wheel_position in [
-		Vector3(-0.82, 0.28, -0.88),
-		Vector3(0.82, 0.28, -0.88),
-		Vector3(-0.82, 0.28, 0.88),
-		Vector3(0.82, 0.28, 0.88)
-	]:
-		var wheel := MeshInstance3D.new()
-		var cylinder := CylinderMesh.new()
-		cylinder.top_radius = 0.28
-		cylinder.bottom_radius = 0.28
-		cylinder.height = 0.22
-		wheel.mesh = cylinder
-		wheel.position = wheel_position
-		wheel.rotation_degrees.z = 90.0
-		wheel.material_override = dark
-		add_child(wheel)

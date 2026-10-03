@@ -29,6 +29,10 @@ var tire_health: float = 1.0
 var damage: float = 0.0
 var in_pit_lane: bool = false
 var pit_servicing: bool = false
+var replay_mode: bool = false
+var autopilot_enabled: bool = false
+var autopilot_target_speed: float = 28.0
+var autopilot_lookahead: float = 0.018
 
 var _visual: Node3D
 var _wheel_nodes: Array[Node3D] = []
@@ -41,6 +45,7 @@ var _skid_marks: Array[Node3D] = []
 var _skid_timer: float = 0.0
 var _smoke_timer: float = 0.0
 var _engine_audio: EngineAudio3D
+var _fx_audio: VehicleFxAudio3D
 var _last_steer_input: float = 0.0
 var _base_forward_speed: float = 0.0
 
@@ -53,7 +58,10 @@ func _ready() -> void:
 	_build_audio()
 
 func _physics_process(delta: float) -> void:
-	if not input_enabled:
+	if replay_mode:
+		velocity = Vector3.ZERO
+		return
+	if not input_enabled and not autopilot_enabled:
 		return
 
 	var throttle := Input.get_action_strength("accelerate")
@@ -61,6 +69,15 @@ func _physics_process(delta: float) -> void:
 	var steer_input := Input.get_axis("steer_left", "steer_right")
 	var boost := Input.is_action_pressed("boost")
 	var pit_requested := Input.is_action_pressed("pit_service")
+
+	if autopilot_enabled:
+		var controls := _autopilot_controls()
+		throttle = float(controls.throttle)
+		reverse_input = float(controls.brake)
+		steer_input = float(controls.steer)
+		boost = bool(controls.boost)
+		pit_requested = false
+
 	_last_steer_input = steer_input
 
 	var forward := -global_transform.basis.z.normalized()
@@ -183,6 +200,9 @@ func _apply_collision_damage() -> void:
 
 	damage = clampf(damage + minf(0.08, impact_speed * 0.0018), 0.0, 1.0)
 	velocity *= 0.72
+	if _fx_audio:
+		_fx_audio.trigger_impact(clampf(impact_speed / 28.0, 0.15, 1.0))
+	_spawn_sparks(clampf(impact_speed / 24.0, 0.25, 1.0))
 
 func _update_visuals(delta: float, steer_input: float, forward_speed: float) -> void:
 	if _visual == null:
@@ -280,6 +300,11 @@ func _build_audio() -> void:
 	_engine_audio.car = self
 	add_child(_engine_audio)
 
+	_fx_audio = VehicleFxAudio3D.new()
+	_fx_audio.name = "TiresAndImpactAudio"
+	_fx_audio.car = self
+	add_child(_fx_audio)
+
 func _build_collision() -> void:
 	var collision := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
@@ -288,61 +313,78 @@ func _build_collision() -> void:
 	collision.position.y = 0.35
 	add_child(collision)
 
-func _make_material(color: Color, roughness: float = 0.35, metallic: float = 0.08) -> StandardMaterial3D:
-	var material := StandardMaterial3D.new()
-	material.albedo_color = color
-	material.roughness = roughness
-	material.metallic = metallic
-	return material
+func _autopilot_controls() -> Dictionary:
+	if track == null or track.get_length() <= 0.0:
+		return {"throttle": 0.0, "brake": 1.0, "steer": 0.0, "boost": false}
 
-func _mesh_box(size: Vector3, position: Vector3, material: Material) -> MeshInstance3D:
-	var node := MeshInstance3D.new()
-	var mesh := BoxMesh.new()
-	mesh.size = size
-	node.mesh = mesh
-	node.position = position
-	node.material_override = material
-	return node
+	var ratio: float = track.get_progress_ratio(global_position)
+	var speed_ratio: float = clampf(speed_kmh / maxf(1.0, top_speed * 3.6), 0.0, 1.0)
+	var lookahead: float = autopilot_lookahead + speed_ratio * 0.012
+
+	var target := track.get_world_transform_at_ratio(ratio + lookahead)
+	var local_target: Vector3 = to_local(target.origin)
+	var steer: float = clampf(local_target.x / maxf(2.2, absf(local_target.z)), -1.0, 1.0)
+
+	var far_target := track.get_world_transform_at_ratio(ratio + lookahead * 1.9)
+	var far_local: Vector3 = to_local(far_target.origin)
+	var turn_severity: float = clampf(absf(far_local.x) / maxf(3.0, absf(far_local.z)), 0.0, 1.0)
+	var desired_speed: float = autopilot_target_speed * lerpf(1.0, 0.63, turn_severity)
+	var current_speed_mps: float = speed_kmh / 3.6
+
+	var throttle: float = 1.0 if current_speed_mps < desired_speed else 0.0
+	var brake: float = 1.0 if current_speed_mps > desired_speed + 2.2 else 0.0
+	var boost: bool = turn_severity < 0.10 and current_speed_mps < desired_speed * 0.86
+
+	return {
+		"throttle": throttle,
+		"brake": brake,
+		"steer": steer,
+		"boost": boost
+	}
+
+func _spawn_sparks(strength: float) -> void:
+	var world := get_tree().current_scene
+	if world == null:
+		return
+
+	var spark_material := StandardMaterial3D.new()
+	spark_material.albedo_color = Color("#ffd56a")
+	spark_material.emission_enabled = true
+	spark_material.emission = Color("#ff9d32")
+	spark_material.emission_energy_multiplier = 2.5
+	spark_material.roughness = 0.3
+
+	var count := int(lerpf(5.0, 13.0, strength))
+	for i in range(count):
+		var spark := MeshInstance3D.new()
+		var mesh := BoxMesh.new()
+		mesh.size = Vector3(0.035, 0.035, 0.18 + strength * 0.14)
+		spark.mesh = mesh
+		spark.material_override = spark_material.duplicate()
+		spark.global_position = global_position + Vector3.UP * 0.28
+		spark.rotation = Vector3(
+			randf_range(-0.9, 0.9),
+			randf_range(-PI, PI),
+			randf_range(-0.9, 0.9)
+		)
+		world.add_child(spark)
+
+		var direction := Vector3(
+			randf_range(-1.0, 1.0),
+			randf_range(0.25, 1.25),
+			randf_range(-1.0, 1.0)
+		).normalized()
+		var target := spark.global_position + direction * randf_range(1.0, 2.8) * strength
+
+		var tween := create_tween()
+		tween.set_parallel(true)
+		tween.tween_property(spark, "global_position", target, 0.30)
+		tween.tween_property(spark, "scale", Vector3.ZERO, 0.30)
+		tween.chain().tween_callback(spark.queue_free)
 
 func _build_visual() -> void:
-	_visual = Node3D.new()
-	_visual.name = "CarVisual"
-	add_child(_visual)
-
-	var paint := _make_material(body_color, 0.22, 0.34)
-	var paint_dark := _make_material(body_color.darkened(0.18), 0.28, 0.28)
-	var dark := _make_material(Color("#10141a"), 0.5, 0.05)
-	var glass := _make_material(Color("#203345"), 0.12, 0.38)
-	var white := _make_material(Color("#f6f4ed"), 0.3, 0.1)
-	var light := _make_material(Color("#ffe8b8"), 0.16, 0.22)
-
-	_visual.add_child(_mesh_box(Vector3(1.48, 0.40, 2.82), Vector3(0, 0.42, 0.02), paint))
-	_visual.add_child(_mesh_box(Vector3(1.30, 0.18, 0.72), Vector3(0, 0.57, -1.00), paint_dark))
-	_visual.add_child(_mesh_box(Vector3(1.16, 0.42, 1.08), Vector3(0, 0.78, -0.16), glass))
-	_visual.add_child(_mesh_box(Vector3(0.28, 0.055, 2.42), Vector3(0, 0.69, -0.07), white))
-	_visual.add_child(_mesh_box(Vector3(1.52, 0.11, 0.18), Vector3(0, 0.67, 1.27), dark))
-	_visual.add_child(_mesh_box(Vector3(0.42, 0.09, 0.08), Vector3(-0.42, 0.51, -1.42), light))
-	_visual.add_child(_mesh_box(Vector3(0.42, 0.09, 0.08), Vector3(0.42, 0.51, -1.42), light))
-
-	var wheel_positions := [
-		Vector3(-0.82, 0.28, -0.88),
-		Vector3(0.82, 0.28, -0.88),
-		Vector3(-0.82, 0.28, 0.88),
-		Vector3(0.82, 0.28, 0.88)
-	]
-
-	for wheel_position in wheel_positions:
-		var pivot := Node3D.new()
-		pivot.position = wheel_position
-		_visual.add_child(pivot)
-		_wheel_nodes.append(pivot)
-
-		var wheel := MeshInstance3D.new()
-		var cylinder := CylinderMesh.new()
-		cylinder.top_radius = 0.29
-		cylinder.bottom_radius = 0.29
-		cylinder.height = 0.24
-		wheel.mesh = cylinder
-		wheel.rotation_degrees.z = 90.0
-		wheel.material_override = dark
-		pivot.add_child(wheel)
+	var built: Dictionary = RaceCarVisual3D.build(self, body_color, Color("#f6f4ed"))
+	_visual = built.root as Node3D
+	_wheel_nodes.clear()
+	for wheel in built.wheels:
+		_wheel_nodes.append(wheel as Node3D)

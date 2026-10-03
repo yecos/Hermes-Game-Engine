@@ -6,6 +6,7 @@ var camera: RaceCamera3D
 var ai_racers: Array[AIRacer3D] = []
 var race_manager: RaceManager3D
 var runtime_bridge: HermesRuntimeBridge
+var replay_manager: ReplayManager3D
 
 func _ready() -> void:
 	_register_input_actions()
@@ -15,6 +16,7 @@ func _ready() -> void:
 	_spawn_ai()
 	_spawn_camera()
 	_spawn_race_manager()
+	_spawn_replay_manager()
 	_spawn_runtime_bridge()
 	print("HGE_GODOT_RUNTIME_READY")
 
@@ -29,6 +31,7 @@ func _register_input_actions() -> void:
 	_add_key("steer_right", KEY_RIGHT)
 	_add_key("boost", KEY_SPACE)
 	_add_key("pit_service", KEY_E)
+	_add_key("replay", KEY_R)
 
 func _add_key(action: StringName, keycode: Key) -> void:
 	if not InputMap.has_action(action):
@@ -73,6 +76,7 @@ func _build_environment() -> void:
 
 	_build_scenery()
 	_build_pit_complex()
+	_build_trackside_festival()
 
 func _build_scenery() -> void:
 	var tree_positions := [
@@ -181,6 +185,103 @@ func _build_pit_complex() -> void:
 			seat.material_override = seat_material
 			pit_root.add_child(seat)
 
+func _build_trackside_festival() -> void:
+	var root := Node3D.new()
+	root.name = "TracksideFestival"
+	add_child(root)
+
+	var banner_colors: Array[Color] = [
+		Color("#2f7fff"),
+		Color("#ef4052"),
+		Color("#ffd33f"),
+		Color("#35c977"),
+		Color("#a858e8")
+	]
+
+	var banner_positions: Array[Vector3] = [
+		Vector3(-48, 1.7, -18),
+		Vector3(48, 1.7, -8),
+		Vector3(34, 1.7, 37),
+		Vector3(-38, 1.7, 38)
+	]
+
+	for i in range(banner_positions.size()):
+		var pole_left := RaceCarVisual3D.box(Vector3(0.12, 3.2, 0.12), banner_positions[i] + Vector3(-1.9, 0.0, 0.0), RaceCarVisual3D.material(Color("#c9cdd2"), 0.4, 0.55))
+		var pole_right := RaceCarVisual3D.box(Vector3(0.12, 3.2, 0.12), banner_positions[i] + Vector3(1.9, 0.0, 0.0), RaceCarVisual3D.material(Color("#c9cdd2"), 0.4, 0.55))
+		var banner := RaceCarVisual3D.box(Vector3(3.9, 1.0, 0.12), banner_positions[i] + Vector3(0.0, 0.55, 0.0), RaceCarVisual3D.material(banner_colors[i], 0.5, 0.05))
+		root.add_child(pole_left)
+		root.add_child(pole_right)
+		root.add_child(banner)
+
+	var tent_positions: Array[Vector3] = [
+		Vector3(-51, 0.0, 8),
+		Vector3(50, 0.0, 17),
+		Vector3(9, 0.0, 52)
+	]
+	for i in range(tent_positions.size()):
+		var tent := Node3D.new()
+		tent.position = tent_positions[i]
+		root.add_child(tent)
+
+		var base_color: Color = banner_colors[(i + 1) % banner_colors.size()]
+		var roof := RaceCarVisual3D.box(Vector3(4.8, 0.35, 3.4), Vector3(0.0, 2.4, 0.0), RaceCarVisual3D.material(base_color, 0.65, 0.02), Vector3(0.0, 0.0, deg_to_rad(6.0)))
+		tent.add_child(roof)
+		for corner in [
+			Vector3(-2.0, 1.2, -1.3),
+			Vector3(2.0, 1.2, -1.3),
+			Vector3(-2.0, 1.2, 1.3),
+			Vector3(2.0, 1.2, 1.3)
+		]:
+			tent.add_child(RaceCarVisual3D.box(Vector3(0.10, 2.4, 0.10), corner, RaceCarVisual3D.material(Color("#e2e2df"), 0.5, 0.4)))
+
+	var crowd_origins: Array[Vector3] = [
+		Vector3(-24, 0.0, 48),
+		Vector3(18, 0.0, 48),
+		Vector3(47, 0.0, -24)
+	]
+	for group_index in range(crowd_origins.size()):
+		for row in range(3):
+			for column in range(12):
+				var person := Node3D.new()
+				person.position = crowd_origins[group_index] + Vector3(float(column) * 0.72, float(row) * 0.30, float(row) * 0.72)
+				root.add_child(person)
+
+				var body_color: Color = banner_colors[(group_index + row + column) % banner_colors.size()]
+				var torso := RaceCarVisual3D.box(Vector3(0.28, 0.48, 0.22), Vector3(0.0, 0.56, 0.0), RaceCarVisual3D.material(body_color, 0.7, 0.0))
+				person.add_child(torso)
+
+				var head := MeshInstance3D.new()
+				var head_mesh := SphereMesh.new()
+				head_mesh.radius = 0.13
+				head_mesh.height = 0.26
+				head.mesh = head_mesh
+				head.position = Vector3(0.0, 0.92, 0.0)
+				head.material_override = RaceCarVisual3D.material(Color("#d8a77f"), 0.8, 0.0)
+				person.add_child(head)
+
+	for i in range(10):
+		var stack := Node3D.new()
+		stack.position = Vector3(-52.0 + float(i) * 2.1, 0.0, -32.0)
+		root.add_child(stack)
+		for tire_index in range(3):
+			var tire := RaceCarVisual3D.cylinder(0.36, 0.24, Vector3(0.0, 0.18 + float(tire_index) * 0.23, 0.0), RaceCarVisual3D.material(Color("#16191e"), 0.9, 0.0))
+			stack.add_child(tire)
+
+	for i in range(12):
+		var cone := Node3D.new()
+		cone.position = Vector3(-12.0 + float(i) * 2.0, 0.0, 44.0)
+		root.add_child(cone)
+		var cone_body := CylinderMesh.new()
+		cone_body.top_radius = 0.08
+		cone_body.bottom_radius = 0.22
+		cone_body.height = 0.55
+		cone_body.radial_segments = 12
+		var cone_mesh := MeshInstance3D.new()
+		cone_mesh.mesh = cone_body
+		cone_mesh.position.y = 0.28
+		cone_mesh.material_override = RaceCarVisual3D.material(Color("#ff7a2f"), 0.7, 0.0)
+		cone.add_child(cone_mesh)
+
 func _build_track() -> void:
 	track = TrackSpline.new()
 	track.name = "GrandCircuit"
@@ -240,10 +341,19 @@ func _spawn_race_manager() -> void:
 	race_manager.total_laps = 3
 	add_child(race_manager)
 
+func _spawn_replay_manager() -> void:
+	replay_manager = ReplayManager3D.new()
+	replay_manager.name = "ReplayManager"
+	replay_manager.player = player
+	replay_manager.track = track
+	replay_manager.live_camera = camera
+	add_child(replay_manager)
+
 func _spawn_runtime_bridge() -> void:
 	runtime_bridge = HermesRuntimeBridge.new()
 	runtime_bridge.name = "HermesRuntimeBridge"
 	runtime_bridge.player = player
 	runtime_bridge.track = track
 	runtime_bridge.race_manager = race_manager
+	runtime_bridge.replay_manager = replay_manager
 	add_child(runtime_bridge)

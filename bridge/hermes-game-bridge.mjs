@@ -260,6 +260,99 @@ async function buildGodotPlan(prompt) {
   return { plan, result, telemetryBefore: telemetry };
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function runGodotTest(laps = 1, timeoutMs = 80_000) {
+  await godotCall({ command: 'start_test_run', laps });
+  const started = Date.now();
+
+  while (Date.now() - started < timeoutMs) {
+    await sleep(500);
+    const status = await godotCall({ command: 'test_summary' });
+    const test = status?.test || {};
+    if (!test.running && test.summary && Object.keys(test.summary).length > 0) {
+      return test.summary;
+    }
+  }
+
+  await godotCall({ command: 'stop_test_run' }).catch(() => {});
+  throw new Error('Godot automated test run timed out');
+}
+
+async function buildAutoBalancePlan(goal, summary) {
+  const runtime = await godotCall({ command: 'telemetry' });
+  const telemetry = runtime?.telemetry || {};
+
+  const system = [
+    'You are the vehicle dynamics engineer for Hermes Game Engine.',
+    'Analyze the automated Godot test result and choose conservative tuning changes.',
+    'Return ONLY one valid JSON object with no markdown.',
+    'Required shape: {"command":"set_tuning","values":{},"reason":"short Spanish explanation"}',
+    'Allowed values keys: top_speed, acceleration, brake_force, lateral_grip, steering_rate, turbo_force.',
+    'Do not change a value unless the telemetry supports the change or the user goal explicitly asks for it.',
+    'Prefer at most 3 tuning changes in one iteration.',
+    'CURRENT_TELEMETRY:',
+    JSON.stringify(telemetry),
+    'TEST_SUMMARY:',
+    JSON.stringify(summary)
+  ].join('\n');
+
+  const response = await hermesFetch('/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'hermes-agent',
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: String(goal || 'Balancea el carro para conducción arcade estable, rápida y controlable.') }
+      ],
+      stream: false
+    })
+  });
+
+  const content = response?.choices?.[0]?.message?.content;
+  const plan = extractJsonObject(content);
+  if (plan?.command !== 'set_tuning' || !plan.values || typeof plan.values !== 'object' || Array.isArray(plan.values)) {
+    throw new Error('Hermes auto-balance returned invalid plan');
+  }
+
+  const allowedKeys = new Set(['top_speed', 'acceleration', 'brake_force', 'lateral_grip', 'steering_rate', 'turbo_force']);
+  const entries = Object.entries(plan.values);
+  if (entries.length > 3) throw new Error('Hermes auto-balance attempted too many changes');
+
+  for (const [key, value] of entries) {
+    if (!allowedKeys.has(key) || typeof value !== 'number') {
+      throw new Error(`Hermes auto-balance returned invalid tuning key: ${key}`);
+    }
+  }
+
+  return {
+    command: 'set_tuning',
+    values: plan.values,
+    reason: typeof plan.reason === 'string' ? plan.reason : ''
+  };
+}
+
+async function autoBalanceGodot(goal, laps = 1) {
+  const beforeTelemetry = await godotCall({ command: 'telemetry' });
+  const beforeTest = await runGodotTest(laps);
+  const plan = await buildAutoBalancePlan(goal, beforeTest);
+  const applied = await godotCall(plan);
+  const afterTest = await runGodotTest(1);
+  const afterTelemetry = await godotCall({ command: 'telemetry' });
+
+  return {
+    goal,
+    beforeTest,
+    plan,
+    applied,
+    afterTest,
+    beforeTelemetry: beforeTelemetry?.telemetry || {},
+    afterTelemetry: afterTelemetry?.telemetry || {}
+  };
+}
+
 async function buildPlan({ prompt, tools, project, activeScene }) {
   const state = compactProject(project, activeScene);
   const system = [
@@ -346,6 +439,17 @@ const server = http.createServer(async (req, res) => {
       }
       const body = await readJson(req);
       const execution = await buildGodotPlan(body.prompt);
+      const info = await modelInfo().catch(() => ({ model: 'hermes-agent', provider: 'hermes' }));
+      return sendJson(res, 200, { ok: true, ...execution, ...info }, origin);
+    }
+
+    if (req.method === 'POST' && req.url === '/godot/autobalance') {
+      if (req.headers['x-hge-bridge'] !== '1') {
+        return sendJson(res, 400, { error: 'Missing bridge header' }, origin);
+      }
+      const body = await readJson(req);
+      const laps = Math.max(1, Math.min(2, Number(body.laps || 1)));
+      const execution = await autoBalanceGodot(body.goal, laps);
       const info = await modelInfo().catch(() => ({ model: 'hermes-agent', provider: 'hermes' }));
       return sendJson(res, 200, { ok: true, ...execution, ...info }, origin);
     }
