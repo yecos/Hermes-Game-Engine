@@ -46,14 +46,19 @@ export class PhaserRuntime {
     this.rebuildTilemap();
     this.syncEntities();
     this.bindSceneInput();
+    // Gameplay keys must not be captured globally; otherwise W/A/S/D
+    // and Space stop working inside editor inputs and the Hermes prompt.
     this.keys = this.scene.input.keyboard.addKeys({
       up: Phaser.Input.Keyboard.KeyCodes.W,
       down: Phaser.Input.Keyboard.KeyCodes.S,
       left: Phaser.Input.Keyboard.KeyCodes.A,
       right: Phaser.Input.Keyboard.KeyCodes.D,
+      arrowUp: Phaser.Input.Keyboard.KeyCodes.UP,
+      arrowDown: Phaser.Input.Keyboard.KeyCodes.DOWN,
+      arrowLeft: Phaser.Input.Keyboard.KeyCodes.LEFT,
+      arrowRight: Phaser.Input.Keyboard.KeyCodes.RIGHT,
       boost: Phaser.Input.Keyboard.KeyCodes.SPACE
-    });
-    this.cursors = this.scene.input.keyboard.createCursorKeys();
+    }, false);
     this.applyWorldAppearance();
     this.ready = true;
     window.dispatchEvent(new CustomEvent('hge:runtime-ready'));
@@ -241,16 +246,23 @@ export class PhaserRuntime {
     this.tileLayer?.setAlpha(this.store.settings.night ? 0.82 : 1);
   }
 
+  isTypingInEditor() {
+    const active = document.activeElement;
+    if (!active) return false;
+    const tag = active.tagName?.toLowerCase();
+    return tag === 'input' || tag === 'textarea' || tag === 'select' || active.isContentEditable;
+  }
+
   update(time, dt) {
     if (!this.scene || this.store.mode !== 'play') return;
     const player = this.store.entities.find((entity) => entity.type === 'player');
     const playerObject = player && this.objects.get(player.id);
-    if (playerObject) {
+    if (playerObject && !this.isTypingInEditor()) {
       let dx = 0, dy = 0;
-      if (this.keys.left.isDown || this.cursors.left.isDown) dx--;
-      if (this.keys.right.isDown || this.cursors.right.isDown) dx++;
-      if (this.keys.up.isDown || this.cursors.up.isDown) dy--;
-      if (this.keys.down.isDown || this.cursors.down.isDown) dy++;
+      if (this.keys.left.isDown || this.keys.arrowLeft.isDown) dx--;
+      if (this.keys.right.isDown || this.keys.arrowRight.isDown) dx++;
+      if (this.keys.up.isDown || this.keys.arrowUp.isDown) dy--;
+      if (this.keys.down.isDown || this.keys.arrowDown.isDown) dy++;
       if (dx || dy) {
         const length = Math.hypot(dx, dy), boost = this.keys.boost.isDown ? 1.6 : 1;
         playerObject.x = Phaser.Math.Clamp(playerObject.x + dx / length * (player.speed ?? 240) * boost * dt, 20, this.store.settings.width - 20);
