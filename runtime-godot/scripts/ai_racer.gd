@@ -68,10 +68,12 @@ func _autopilot_controls() -> Dictionary:
 	var ratio := track.get_progress_ratio(global_position)
 	var speed_ratio := clampf(speed_kmh / maxf(1.0, top_speed * 3.6), 0.0, 1.0)
 
-	# Skilled drivers look further through a corner as speed rises.
-	var near_distance := lerpf(10.0, 23.0, speed_ratio) * lerpf(0.92, 1.08, driver_skill)
-	var medium_distance := lerpf(23.0, 42.0, speed_ratio)
-	var far_distance := lerpf(38.0, 66.0, speed_ratio) * lerpf(1.0, 0.88, late_brake_bias)
+	# Skilled drivers look further through a corner as speed rises. On the PRO
+	# circuit the two main straights can put the car above 140 km/h, so the far
+	# horizon must cover a real braking zone rather than only the corner entry.
+	var near_distance := lerpf(10.0, 27.0, speed_ratio) * lerpf(0.92, 1.08, driver_skill)
+	var medium_distance := lerpf(23.0, 54.0, speed_ratio)
+	var far_distance := lerpf(40.0, 92.0, speed_ratio) * lerpf(1.0, 0.90, late_brake_bias)
 
 	var near_frame := track.get_world_transform_at_ratio(ratio + near_distance / length)
 	var medium_frame := track.get_world_transform_at_ratio(ratio + medium_distance / length)

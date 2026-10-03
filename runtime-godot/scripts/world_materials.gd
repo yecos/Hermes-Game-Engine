@@ -40,8 +40,8 @@ static func grass_material() -> ShaderMaterial:
 shader_type spatial;
 render_mode diffuse_burley, specular_schlick_ggx;
 
-uniform vec4 grass_a : source_color = vec4(0.12, 0.42, 0.08, 1.0);
-uniform vec4 grass_b : source_color = vec4(0.22, 0.56, 0.11, 1.0);
+uniform vec4 grass_a : source_color = vec4(0.105, 0.31, 0.075, 1.0);
+uniform vec4 grass_b : source_color = vec4(0.19, 0.43, 0.11, 1.0);
 
 float hash21(vec2 p) {
 	p = fract(p * vec2(234.34, 435.345));
@@ -49,14 +49,26 @@ float hash21(vec2 p) {
 	return fract(p.x * p.y);
 }
 
+float noise2(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	float a = hash21(i);
+	float b = hash21(i + vec2(1.0, 0.0));
+	float c = hash21(i + vec2(0.0, 1.0));
+	float d = hash21(i + vec2(1.0, 1.0));
+	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
 void fragment() {
-	float large = hash21(floor(UV * 55.0));
-	float fine = hash21(floor(UV * 520.0));
-	float stripes = 0.5 + 0.5 * sin((UV.x + UV.y) * 220.0);
-	vec3 color = mix(grass_a.rgb, grass_b.rgb, large * 0.62 + stripes * 0.10);
-	color *= 0.90 + fine * 0.12;
+	float broad = noise2(UV * 34.0);
+	float medium = noise2(UV * 145.0);
+	float fine = noise2(UV * 620.0);
+	float mowing = 0.5 + 0.5 * sin((UV.x * 0.82 + UV.y) * 185.0);
+	vec3 color = mix(grass_a.rgb, grass_b.rgb, broad * 0.62 + medium * 0.22);
+	color *= 0.94 + fine * 0.07 + mowing * 0.025;
 	ALBEDO = color;
-	ROUGHNESS = 0.93;
+	ROUGHNESS = 0.94;
 }
 """
 	var material := ShaderMaterial.new()

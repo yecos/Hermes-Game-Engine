@@ -90,7 +90,7 @@ func build_red_blue_pro_circuit() -> void:
 		Vector3(-178.903, 0.0, -128.499),
 		Vector3(-157.293, 0.0, -94.941),
 		Vector3(-139.766, 0.0, -56.588),
-		Vector3(-128.115, 0.0, -81.815),
+		Vector3(-111.000, 0.0, -75.000),
 		Vector3(-143.357, 0.0, -122.985),
 		Vector3(-181.252, 0.0, -146.441),
 		Vector3(-220.225, 0.0, -128.179),
@@ -488,6 +488,22 @@ func _bank_at_ratio(ratio: float) -> float:
 	var t: float = scaled - floor(scaled)
 	return lerpf(bank_degrees[index_a], bank_degrees[index_b], t)
 
+func _signed_curvature_at_distance(distance: float) -> float:
+	var length := get_length()
+	if length <= 0.0:
+		return 0.0
+	var window := 7.5
+	var before := curve.sample_baked(fposmod(distance - window, length), true)
+	var center := curve.sample_baked(fposmod(distance, length), true)
+	var after := curve.sample_baked(fposmod(distance + window, length), true)
+	var incoming := Vector2(center.x - before.x, center.z - before.z).normalized()
+	var outgoing := Vector2(after.x - center.x, after.z - center.z).normalized()
+	var angle := atan2(incoming.cross(outgoing), clampf(incoming.dot(outgoing), -1.0, 1.0))
+	return angle / maxf(0.001, window * 2.0)
+
+func _curve_strength_at_distance(distance: float) -> float:
+	return smoothstep(0.0025, 0.0140, absf(_signed_curvature_at_distance(distance)))
+
 func _sample_frame(distance: float) -> Dictionary:
 	var length := get_length()
 	var d := fposmod(distance, length)
@@ -535,6 +551,8 @@ func _build_road_mesh() -> void:
 	road_surface.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var curb_surface := SurfaceTool.new()
 	curb_surface.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var line_surface := SurfaceTool.new()
+	line_surface.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var length := get_length()
 
 	for i in range(sample_count):
@@ -558,14 +576,36 @@ func _build_road_mesh() -> void:
 		var v1 := d1 / 5.0
 		_add_quad(road_surface, left0, right0, right1, left1, Color.WHITE, Vector2(0,v0), Vector2(1,v0), Vector2(1,v1), Vector2(0,v1), normal)
 
-		var curb_color := Color("#f4f3ef") if (i / 4) % 2 == 0 else Color("#e34b4b")
+		var midpoint := (d0 + d1) * 0.5
+		var curve_strength := _curve_strength_at_distance(midpoint)
+		var curb_active := curve_strength > 0.18
+		var stripe_index := int(floor(midpoint / 3.6))
+		var curb_color := Color("#f3f1e9") if stripe_index % 2 == 0 else Color("#cf343b")
+		if not curb_active:
+			curb_color = Color("#454b4c")
 		var outer_l0 := p0 - r0 * (road_half_width + curb_width)
 		var outer_l1 := p1 - r1 * (road_half_width + curb_width)
 		var outer_r0 := p0 + r0 * (road_half_width + curb_width)
 		var outer_r1 := p1 + r1 * (road_half_width + curb_width)
-		var lift := normal * 0.035
+		var lift := normal * (0.035 if curb_active else 0.008)
 		_add_quad(curb_surface, outer_l0+lift, left0+lift, left1+lift, outer_l1+lift, curb_color, Vector2(0,v0),Vector2(1,v0),Vector2(1,v1),Vector2(0,v1),normal)
 		_add_quad(curb_surface, right0+lift, outer_r0+lift, outer_r1+lift, right1+lift, curb_color, Vector2(0,v0),Vector2(1,v0),Vector2(1,v1),Vector2(0,v1),normal)
+
+		# Crisp white edge lines make the racing surface readable at speed without
+		# turning the circuit into a road with center markings.
+		var line_width := 0.12
+		var line_offset := road_half_width - 0.15
+		var line_l_outer0 := p0 - r0 * (line_offset + line_width * 0.5)
+		var line_l_inner0 := p0 - r0 * (line_offset - line_width * 0.5)
+		var line_l_outer1 := p1 - r1 * (line_offset + line_width * 0.5)
+		var line_l_inner1 := p1 - r1 * (line_offset - line_width * 0.5)
+		var line_r_inner0 := p0 + r0 * (line_offset - line_width * 0.5)
+		var line_r_outer0 := p0 + r0 * (line_offset + line_width * 0.5)
+		var line_r_inner1 := p1 + r1 * (line_offset - line_width * 0.5)
+		var line_r_outer1 := p1 + r1 * (line_offset + line_width * 0.5)
+		var line_lift := normal * 0.018
+		_add_quad(line_surface, line_l_outer0+line_lift, line_l_inner0+line_lift, line_l_inner1+line_lift, line_l_outer1+line_lift, Color.WHITE, Vector2.ZERO,Vector2.RIGHT,Vector2.ONE,Vector2.DOWN,normal)
+		_add_quad(line_surface, line_r_inner0+line_lift, line_r_outer0+line_lift, line_r_outer1+line_lift, line_r_inner1+line_lift, Color.WHITE, Vector2.ZERO,Vector2.RIGHT,Vector2.ONE,Vector2.DOWN,normal)
 
 	var root := Node3D.new()
 	root.name = "RoadMesh"
@@ -582,6 +622,16 @@ func _build_road_mesh() -> void:
 	curbs.mesh = curb_surface.commit()
 	curbs.material_override = WorldMaterials3D.curb_material()
 	root.add_child(curbs)
+
+	var edge_lines := MeshInstance3D.new()
+	edge_lines.name = "EdgeLines"
+	edge_lines.mesh = line_surface.commit()
+	var line_material := StandardMaterial3D.new()
+	line_material.albedo_color = Color("#f3f4ef")
+	line_material.roughness = 0.72
+	line_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	edge_lines.material_override = line_material
+	root.add_child(edge_lines)
 
 func _build_runoff_mesh() -> void:
 	var old := get_node_or_null("Runoff")
@@ -604,7 +654,10 @@ func _build_runoff_mesh() -> void:
 		var normal: Vector3 = (f0.normal + f1.normal).normalized()
 		var edge := road_half_width + curb_width
 		var outer := edge + runoff_width
-		var color := Color("#c9a66b") if i % 7 < 5 else Color("#b99861")
+		var curve_strength := _curve_strength_at_distance((d0 + d1) * 0.5)
+		var straight_color := Color("#596954")
+		var corner_color := Color("#777d76")
+		var color := straight_color.lerp(corner_color, curve_strength)
 
 		_add_quad(surface, p0-r0*outer, p0-r0*edge, p1-r1*edge, p1-r1*outer, color, Vector2.ZERO,Vector2.RIGHT,Vector2.ONE,Vector2.DOWN,normal)
 		_add_quad(surface, p0+r0*edge, p0+r0*outer, p1+r1*outer, p1+r1*edge, color, Vector2.ZERO,Vector2.RIGHT,Vector2.ONE,Vector2.DOWN,normal)
@@ -783,8 +836,20 @@ func _pit_gate_ratio(ratio: float) -> bool:
 	var wrapped := fposmod(ratio, 1.0)
 	return (wrapped >= 0.90 and wrapped <= 0.925) or (wrapped >= 0.075 and wrapped <= 0.10)
 
-func get_barrier_offset(side: float, ratio: float) -> float:
+func _base_barrier_offset_at_ratio(ratio: float) -> float:
 	var base_offset := road_half_width + curb_width + runoff_width + 0.85
+	if active_layout != "red_blue_pro":
+		return base_offset
+
+	var distance := fposmod(ratio, 1.0) * get_length()
+	var curve_strength := _curve_strength_at_distance(distance)
+	# Give straights and flowing corners breathing room. The guardrail closes in
+	# only where a compact safety envelope is useful in the technical sections.
+	var safety_extra := lerpf(4.2, 1.35, curve_strength)
+	return base_offset + safety_extra
+
+func get_barrier_offset(side: float, ratio: float) -> float:
+	var base_offset := _base_barrier_offset_at_ratio(ratio)
 	if side <= 0.0:
 		return base_offset
 	if not _pit_active_ratio(ratio):
@@ -793,12 +858,47 @@ func get_barrier_offset(side: float, ratio: float) -> float:
 	return base_offset + pit_merge * (pit_offset + pit_half_width)
 
 func _main_barrier_offset() -> float:
-	return road_half_width + curb_width + runoff_width + 0.85
+	return _base_barrier_offset_at_ratio(0.0)
 
 func _barrier_transform(frame: Dictionary, side: float, offset: float, height: float) -> Transform3D:
 	var basis := Basis(frame.right, frame.normal, -frame.forward).orthonormalized()
 	var origin: Vector3 = frame.point + frame.right * side * offset + frame.normal * height
 	return Transform3D(basis, origin)
+
+func _barrier_conflicts_with_other_track(
+	frame: Dictionary,
+	side: float,
+	offset: float,
+	source_distance: float
+) -> bool:
+	if active_layout != "red_blue_pro":
+		return false
+
+	var length := get_length()
+	if length <= 0.0:
+		return false
+
+	var candidate: Vector3 = frame.point + frame.right * side * offset
+	var other_offset := curve.get_closest_offset(candidate)
+	var source := fposmod(source_distance, length)
+	var along_delta := absf(other_offset - source)
+	along_delta = minf(along_delta, length - along_delta)
+
+	# Nearby samples from the same bend are expected. Only treat it as a conflict
+	# when the closest centerline belongs to a remote part of the lap.
+	if along_delta < 42.0:
+		return false
+
+	var other_center := curve.sample_baked(other_offset, true)
+	var flat_distance := Vector2(
+		candidate.x - other_center.x,
+		candidate.z - other_center.z
+	).length()
+
+	# Never let a guardrail from one section occupy another section's racing
+	# surface or curb envelope. This matters where the PRO layout folds back
+	# alongside itself near the late-lap hairpin.
+	return flat_distance < road_half_width + curb_width + 1.25
 
 func _build_guardrails() -> void:
 	var old := get_node_or_null("Guardrails")
@@ -810,7 +910,6 @@ func _build_guardrails() -> void:
 	add_child(root)
 
 	var length := get_length()
-	var base_offset := _main_barrier_offset()
 
 	# Main circuit rails remain visible on both sides. The right side has only two
 	# controlled openings where the pit lane physically joins/leaves the circuit.
@@ -822,23 +921,25 @@ func _build_guardrails() -> void:
 		var distance := minf((float(i) + 0.5) * visual_spacing, length - 0.01)
 		var ratio := distance / maxf(length, 0.001)
 		var frame := _sample_frame(distance)
+		var base_offset := _base_barrier_offset_at_ratio(ratio)
 
-		visual_transforms.append(_barrier_transform(frame, -1.0, base_offset, 0.46))
+		if not _barrier_conflicts_with_other_track(frame, -1.0, base_offset, distance):
+			visual_transforms.append(_barrier_transform(frame, -1.0, base_offset, 0.42))
 
-		if not _pit_gate_ratio(ratio):
-			visual_transforms.append(_barrier_transform(frame, 1.0, base_offset, 0.46))
+		if not _pit_gate_ratio(ratio) and not _barrier_conflicts_with_other_track(frame, 1.0, base_offset, distance):
+			visual_transforms.append(_barrier_transform(frame, 1.0, base_offset, 0.42))
 
 		if _pit_active_ratio(ratio):
 			var outer_offset := get_barrier_offset(1.0, ratio)
-			if outer_offset > base_offset + 0.6:
-				visual_transforms.append(_barrier_transform(frame, 1.0, outer_offset, 0.46))
+			if outer_offset > base_offset + 0.6 and not _barrier_conflicts_with_other_track(frame, 1.0, outer_offset, distance):
+				visual_transforms.append(_barrier_transform(frame, 1.0, outer_offset, 0.42))
 
 	var rail_mesh := BoxMesh.new()
 	rail_mesh.size = Vector3(0.20, 0.86, visual_spacing + 0.45)
 	var rail_material := StandardMaterial3D.new()
-	rail_material.albedo_color = Color("#2674c8")
-	rail_material.metallic = 0.18
-	rail_material.roughness = 0.46
+	rail_material.albedo_color = Color("#69757c")
+	rail_material.metallic = 0.52
+	rail_material.roughness = 0.36
 	rail_mesh.material = rail_material
 
 	var multimesh := MultiMesh.new()
@@ -865,15 +966,17 @@ func _build_guardrails() -> void:
 		var distance := minf((float(i) + 0.5) * collision_spacing, length - 0.01)
 		var ratio := distance / maxf(length, 0.001)
 		var frame := _sample_frame(distance)
+		var base_offset := _base_barrier_offset_at_ratio(ratio)
 
-		_add_barrier_collision(body, frame, -1.0, base_offset, collision_spacing, "L", i)
+		if not _barrier_conflicts_with_other_track(frame, -1.0, base_offset, distance):
+			_add_barrier_collision(body, frame, -1.0, base_offset, collision_spacing, "L", i)
 
-		if not _pit_gate_ratio(ratio):
+		if not _pit_gate_ratio(ratio) and not _barrier_conflicts_with_other_track(frame, 1.0, base_offset, distance):
 			_add_barrier_collision(body, frame, 1.0, base_offset, collision_spacing, "R", i)
 
 		if _pit_active_ratio(ratio):
 			var outer_offset := get_barrier_offset(1.0, ratio)
-			if outer_offset > base_offset + 0.6:
+			if outer_offset > base_offset + 0.6 and not _barrier_conflicts_with_other_track(frame, 1.0, outer_offset, distance):
 				_add_barrier_collision(body, frame, 1.0, outer_offset, collision_spacing, "PIT_R", i)
 
 func _add_barrier_collision(
