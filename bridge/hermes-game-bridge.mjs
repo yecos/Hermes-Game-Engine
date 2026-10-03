@@ -218,6 +218,11 @@ async function buildGodotPlan(prompt) {
     '{"command":"reset_car"}',
     '{"command":"service_car"}',
     '{"command":"set_tuning","values":{"top_speed":number?,"acceleration":number?,"brake_force":number?,"lateral_grip":number?,"steering_rate":number?,"turbo_force":number?}}',
+    '{"command":"asset_inventory"}',
+    '{"command":"spawn_asset","asset":"grandstand|light_mast|paddock_tent|service_van|tire_stack|track_cone|tree_lush","x":number,"z":number,"scale":number?,"rotation":number?}',
+    '{"command":"clear_runtime_assets"}',
+    'For spawn_asset use x/z inside -70..70, scale 0.35..2.5 and rotation in degrees.',
+    'Do not place props directly on the racing line unless explicitly requested.',
     'Do not invent keys or commands.',
     'Only change tuning values when the user requests a driving change.',
     'Keep tuning changes conservative unless the user explicitly asks for a large change.',
@@ -239,7 +244,15 @@ async function buildGodotPlan(prompt) {
 
   const content = response?.choices?.[0]?.message?.content;
   const plan = extractJsonObject(content);
-  const allowedCommands = new Set(['telemetry', 'reset_car', 'service_car', 'set_tuning']);
+  const allowedCommands = new Set([
+    'telemetry',
+    'reset_car',
+    'service_car',
+    'set_tuning',
+    'asset_inventory',
+    'spawn_asset',
+    'clear_runtime_assets'
+  ]);
   if (!allowedCommands.has(plan?.command)) {
     throw new Error(`Godot planner returned unsupported command: ${plan?.command || 'missing'}`);
   }
@@ -254,6 +267,28 @@ async function buildGodotPlan(prompt) {
         throw new Error(`Godot planner returned invalid tuning key: ${key}`);
       }
     }
+  }
+
+  if (plan.command === 'spawn_asset') {
+    const allowedAssets = new Set([
+      'grandstand',
+      'light_mast',
+      'paddock_tent',
+      'service_van',
+      'tire_stack',
+      'track_cone',
+      'tree_lush'
+    ]);
+    if (!allowedAssets.has(plan.asset)) {
+      throw new Error(`Godot planner returned invalid asset: ${plan.asset || 'missing'}`);
+    }
+    if (typeof plan.x !== 'number' || typeof plan.z !== 'number') {
+      throw new Error('Godot planner must provide numeric x/z for spawn_asset');
+    }
+    plan.x = Math.max(-70, Math.min(70, plan.x));
+    plan.z = Math.max(-70, Math.min(70, plan.z));
+    if (plan.scale != null) plan.scale = Math.max(0.35, Math.min(2.5, Number(plan.scale)));
+    if (plan.rotation != null) plan.rotation = Math.max(-360, Math.min(360, Number(plan.rotation)));
   }
 
   const result = await godotCall(plan);
@@ -421,6 +456,11 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && req.url === '/godot/telemetry') {
       const result = await godotCall({ command: 'telemetry' });
+      return sendJson(res, 200, result, origin);
+    }
+
+    if (req.method === 'GET' && req.url === '/godot/assets') {
+      const result = await godotCall({ command: 'asset_inventory' });
       return sendJson(res, 200, result, origin);
     }
 

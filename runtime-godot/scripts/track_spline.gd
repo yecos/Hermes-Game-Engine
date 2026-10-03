@@ -16,20 +16,25 @@ func build_default_circuit() -> void:
 	curve = Curve3D.new()
 	curve.bake_interval = 0.5
 
-	var points: Array[Vector3] = [
-		Vector3(-42.0, 0.0, -8.0),
-		Vector3(-35.0, 0.0, -28.0),
-		Vector3(-18.0, 0.0, -37.0),
-		Vector3(7.0, 0.0, -39.0),
-		Vector3(30.0, 0.0, -32.0),
-		Vector3(43.0, 0.0, -17.0),
-		Vector3(47.0, 0.0, 4.0),
-		Vector3(39.0, 0.0, 25.0),
-		Vector3(21.0, 0.0, 36.0),
-		Vector3(-3.0, 0.0, 39.0),
-		Vector3(-27.0, 0.0, 33.0),
-		Vector3(-43.0, 0.0, 17.0)
+	var flat_points: Array[Vector2] = [
+		Vector2(-42.0, -8.0),
+		Vector2(-35.0, -28.0),
+		Vector2(-18.0, -37.0),
+		Vector2(7.0, -39.0),
+		Vector2(30.0, -32.0),
+		Vector2(43.0, -17.0),
+		Vector2(47.0, 4.0),
+		Vector2(39.0, 25.0),
+		Vector2(21.0, 36.0),
+		Vector2(-3.0, 39.0),
+		Vector2(-27.0, 33.0),
+		Vector2(-43.0, 17.0)
 	]
+
+	var points: Array[Vector3] = []
+	for point in flat_points:
+		var elevation := TerrainBuilder3D.height_at(point.x, point.y) + 0.16
+		points.append(Vector3(point.x, elevation, point.y))
 
 	for i in range(points.size() + 1):
 		var index := i % points.size()
@@ -115,27 +120,48 @@ func _sample_frame(distance: float) -> Dictionary:
 		forward = Vector3.FORWARD
 
 	var right := Vector3(-forward.z, 0.0, forward.x).normalized()
-	return {"point": p, "forward": forward, "right": right}
+	var normal := right.cross(forward).normalized()
+	if normal.y < 0.0:
+		normal = -normal
+	return {"point": p, "forward": forward, "right": right, "normal": normal}
 
-func _add_quad(surface: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, d: Vector3, color: Color = Color.WHITE) -> void:
+func _add_quad(
+	surface: SurfaceTool,
+	a: Vector3,
+	b: Vector3,
+	c: Vector3,
+	d: Vector3,
+	color: Color = Color.WHITE,
+	uv_a: Vector2 = Vector2.ZERO,
+	uv_b: Vector2 = Vector2.RIGHT,
+	uv_c: Vector2 = Vector2.ONE,
+	uv_d: Vector2 = Vector2.DOWN,
+	normal: Vector3 = Vector3.UP
+) -> void:
 	surface.set_color(color)
-	surface.set_normal(Vector3.UP)
+	surface.set_normal(normal)
+	surface.set_uv(uv_a)
 	surface.add_vertex(a)
 	surface.set_color(color)
-	surface.set_normal(Vector3.UP)
+	surface.set_normal(normal)
+	surface.set_uv(uv_b)
 	surface.add_vertex(b)
 	surface.set_color(color)
-	surface.set_normal(Vector3.UP)
+	surface.set_normal(normal)
+	surface.set_uv(uv_c)
 	surface.add_vertex(c)
 
 	surface.set_color(color)
-	surface.set_normal(Vector3.UP)
+	surface.set_normal(normal)
+	surface.set_uv(uv_a)
 	surface.add_vertex(a)
 	surface.set_color(color)
-	surface.set_normal(Vector3.UP)
+	surface.set_normal(normal)
+	surface.set_uv(uv_c)
 	surface.add_vertex(c)
 	surface.set_color(color)
-	surface.set_normal(Vector3.UP)
+	surface.set_normal(normal)
+	surface.set_uv(uv_d)
 	surface.add_vertex(d)
 
 func _build_road_mesh() -> void:
@@ -160,40 +186,74 @@ func _build_road_mesh() -> void:
 		var p1: Vector3 = f1.point
 		var r0: Vector3 = f0.right
 		var r1: Vector3 = f1.right
+		var n0: Vector3 = f0.normal
+		var n1: Vector3 = f1.normal
+		var normal := (n0 + n1).normalized()
 
 		var left0 := p0 - r0 * road_half_width
 		var right0 := p0 + r0 * road_half_width
 		var left1 := p1 - r1 * road_half_width
 		var right1 := p1 + r1 * road_half_width
 
-		_add_quad(road_surface, left0, right0, right1, left1)
+		var v0 := d0 / 5.0
+		var v1 := d1 / 5.0
+		_add_quad(
+			road_surface,
+			left0,
+			right0,
+			right1,
+			left1,
+			Color.WHITE,
+			Vector2(0.0, v0),
+			Vector2(1.0, v0),
+			Vector2(1.0, v1),
+			Vector2(0.0, v1),
+			normal
+		)
 
 		var curb_color := Color("#f4f3ef") if (i / 4) % 2 == 0 else Color("#e34b4b")
-		var y_offset := Vector3.UP * 0.035
+		var y_offset := normal * 0.035
 
 		var outer_left0 := p0 - r0 * (road_half_width + curb_width)
 		var outer_left1 := p1 - r1 * (road_half_width + curb_width)
-		_add_quad(curb_surface, outer_left0 + y_offset, left0 + y_offset, left1 + y_offset, outer_left1 + y_offset, curb_color)
+		_add_quad(
+			curb_surface,
+			outer_left0 + y_offset,
+			left0 + y_offset,
+			left1 + y_offset,
+			outer_left1 + y_offset,
+			curb_color,
+			Vector2(0.0, v0),
+			Vector2(1.0, v0),
+			Vector2(1.0, v1),
+			Vector2(0.0, v1),
+			normal
+		)
 
 		var outer_right0 := p0 + r0 * (road_half_width + curb_width)
 		var outer_right1 := p1 + r1 * (road_half_width + curb_width)
-		_add_quad(curb_surface, right0 + y_offset, outer_right0 + y_offset, outer_right1 + y_offset, right1 + y_offset, curb_color)
+		_add_quad(
+			curb_surface,
+			right0 + y_offset,
+			outer_right0 + y_offset,
+			outer_right1 + y_offset,
+			right1 + y_offset,
+			curb_color,
+			Vector2(0.0, v0),
+			Vector2(1.0, v0),
+			Vector2(1.0, v1),
+			Vector2(0.0, v1),
+			normal
+		)
 
-	var road_material := StandardMaterial3D.new()
-	road_material.albedo_color = Color("#444a50")
-	road_material.roughness = 0.93
-	road_material.metallic = 0.0
-	road_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var road_material := WorldMaterials3D.road_material()
 
 	var road_mesh := MeshInstance3D.new()
 	road_mesh.name = "Road"
 	road_mesh.mesh = road_surface.commit()
 	road_mesh.material_override = road_material
 
-	var curb_material := StandardMaterial3D.new()
-	curb_material.vertex_color_use_as_albedo = true
-	curb_material.roughness = 0.82
-	curb_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var curb_material := WorldMaterials3D.curb_material()
 
 	var curb_mesh := MeshInstance3D.new()
 	curb_mesh.name = "Curbs"

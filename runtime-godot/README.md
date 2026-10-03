@@ -2,178 +2,116 @@
 
 Runtime 3D de carreras arcade conectado a Hermes.
 
-## V3 — Visual, replay y auto-balance
+## V4 — GLB/GLTF, terreno, shaders y dirección visual
 
-### Visual
+### Pipeline de assets 3D
 
-- Coche GT procedural compartido por jugador y rivales.
-- Carrocería por capas, splitter, diffuser, side skirts, fenders, spoiler, mirrors, headlights, taillights, exhausts, tires y rims.
-- Cámara 3/4 más baja, FOV cerrado, look-ahead y zoom dinámico.
-- Trackside festival con banners, tents, crowds, tire stacks y cones.
-- Pit complex, gradas, árboles, césped y guardrails.
-- Skid marks, humo de derrape y chispas de impactos.
+Blender 4.4 genera assets originales y reproducibles:
 
-### Física y carrera
+- gt_car.glb
+- tree_lush.glb
+- grandstand.glb
+- paddock_tent.glb
+- light_mast.glb
+- service_van.glb
+- tire_stack.glb
+- track_cone.glb
 
-- Física arcade propia con `CharacterBody3D`.
-- Fuel consumption.
-- Tire wear.
-- Damage.
-- Pit service.
-- Slip telemetry.
-- Guardrails con colisión.
-- Sectores S1/S2/S3.
-- Lap timing y best lap.
-- Rivales IA sobre racing line.
+Generador:
 
-### Audio
+~~~
+"C:\Program Files\Blender Foundation\Blender 4.4\blender.exe" --background --python tools\generate_assets_blender.py -- runtime-godot\assets\generated
+~~~
 
-- Motor procedural con `AudioStreamGenerator`.
-- Tire squeal procedural.
-- Gravel/off-road noise.
-- Impact noise.
+El pack completo es ligero y no usa contenido de terceros.
 
-### Replay TV
+### AssetLibrary
 
-- Buffer de ~12 segundos.
-- Replay real del coche.
-- Cámaras TV automáticas alrededor del circuito.
-- `R` inicia replay si ya existe suficiente historial.
+AssetLibrary3D:
 
-### Test-driver automático
+- carga GLB/GLTF;
+- encuentra nodos por nombre;
+- detecta Wheel_FL, Wheel_FR, Wheel_RL y Wheel_RR;
+- recolorea materiales BodyPaint, BodyDark y Accent;
+- aplica clearcoat al body paint;
+- mantiene fallback procedural si falta un asset.
 
-Godot puede conducir el coche usando la física real.
+Los seis coches de carrera usan el mismo GT GLB y cambian de color por equipo.
+
+### Terreno y elevación
+
+TerrainBuilder3D genera un terreno ondulado de 150 × 150 m.
+
+La misma función de altura se usa para terreno, puntos Curve3D, coche, off-road, skid marks y props colocados por Hermes. La pista ya no es completamente plana.
+
+### Shaders
+
+WorldMaterials3D incluye shader procedural de asfalto, ruido fino, variación de rubber/racing line, shader procedural de césped y material mejorado de curb.
+
+### Render
+
+V4 usa Forward+ con ProceduralSky, filmic tonemapping, ajustes de saturation/contrast, SSAO y SSIL cuando están disponibles, glow moderado, niebla ligera, luz solar cálida y reflections desde el sky.
+
+### Props
+
+El circuito carga GLB reales para vegetación, paddock, graderías, tents, light masts, service van, tire stacks y cones. Los elementos procedurales V3 siguen como fallback.
+
+## Hermes colocando assets
+
+Whitelist segura:
+
+- grandstand
+- light_mast
+- paddock_tent
+- service_van
+- tire_stack
+- track_cone
+- tree_lush
 
 Comandos TCP:
 
-```json
-{"command":"start_test_run","laps":1}
-{"command":"test_summary"}
-{"command":"stop_test_run"}
-```
+~~~
+{"command":"asset_inventory"}
+{"command":"spawn_asset","asset":"paddock_tent","x":-28,"z":51,"scale":1,"rotation":180}
+{"command":"clear_runtime_assets"}
+~~~
 
-Resumen de ejemplo:
+Hermes Game Bridge expone GET /godot/assets, POST /godot y POST /godot/plan.
 
-```json
-{
-  "best_lap_seconds": 11.717,
-  "average_speed_kmh": 86.5,
-  "max_speed_kmh": 100.6,
-  "average_slip": 0.009,
-  "offroad_ratio": 0.0,
-  "fuel_used_liters": 0.13
-}
-```
+Prueba confirmada con gpt-5.6-luna: Hermes recibió la instrucción de colocar una carpa a x -28 / z 51, produjo spawn_asset y Godot confirmó runtime_spawned = 1.
 
-## Hermes ↔ Godot
+## Tests V4
 
-Godot escucha localmente en:
-
-```text
-127.0.0.1:8650
-```
-
-Hermes Game Bridge:
-
-```text
-127.0.0.1:8643
-```
-
-Rutas:
-
-- `GET /godot/telemetry`
-- `POST /godot`
-- `POST /godot/plan`
-- `POST /godot/autobalance`
-
-### Live tuning
-
-Ejemplo:
-
-> Haz que el carro tenga más agarre, pero no cambies la velocidad máxima.
-
-Hermes traduce eso a un comando seguro:
-
-```json
-{
-  "command": "set_tuning",
-  "values": {
-    "lateral_grip": 16
-  }
-}
-```
-
-### Auto-balance
-
-`POST /godot/autobalance` ejecuta:
-
-```text
-vuelta automática
-      ↓
-telemetría real
-      ↓
-Hermes / gpt-5.6-luna
-      ↓
-tuning limitado
-      ↓
-segunda vuelta automática
-      ↓
-comparación antes/después
-```
-
-Prueba V3 confirmada:
-
-```text
-BEFORE
-lap              11.717 s
-avg speed         86.5 km/h
-max speed        100.6 km/h
-avg slip           0.009
-off-road           0%
-
-HERMES
-lateral_grip      14 → 15
-steering_rate   2.35 → 2.40
-top_speed          unchanged
-
-AFTER
-lap              11.719 s
-avg speed         86.5 km/h
-max speed        101.1 km/h
-avg slip           0.009
-off-road           0%
-```
-
-## Controles
-
-- W / ↑: acelerar
-- S / ↓: frenar / reversa
-- A/D o ←/→: dirección
-- Space: turbo
-- E: pit service
-- R: replay
-
-## Ejecutar
-
-```powershell
-godot --path runtime-godot
-```
-
-## Validación
-
-```powershell
+~~~
 npm test
-node --check bridge/hermes-game-bridge.mjs
+node --check bridge\hermes-game-bridge.mjs
+godot --headless --path runtime-godot --script tests\asset_smoke.gd
+godot --headless --path runtime-godot --script tests\orientation_smoke.gd
 godot --headless --path runtime-godot --editor --quit
-```
+~~~
 
-## Próximos hitos
+Confirmado:
 
-- circuitos con elevación real;
-- física de superficies diferenciadas;
-- racing line optimizada por telemetría;
-- audio de ambiente/crowd;
-- modelos externos GLTF/GLB;
-- championship flow;
-- multiplayer autoritativo;
-- Hermes creando y modificando `Curve3D` directamente.
+- 8 GLB cargables;
+- 4 wheel pivots;
+- materiales BodyPaint y Accent;
+- coche orientado a Godot forward (-Z);
+- vuelta automática sobre pista elevada: ~11.72 s;
+- 0% off-road;
+- 0 damage.
+
+## V3 preservado
+
+Siguen activos fuel, tire wear, damage, pits, sectores, replay TV, skid marks, smoke, sparks, audio procedural, test-driver, Hermes live tuning y Hermes auto-balance.
+
+## Próximo salto
+
+- curvas con banking;
+- pit lane físicamente independiente;
+- runoff/gravel;
+- editor Hermes de puntos Curve3D;
+- generación/importación automática de nuevos GLB;
+- LOD;
+- optimización de sombras;
+- championship;
+- multiplayer autoritativo.

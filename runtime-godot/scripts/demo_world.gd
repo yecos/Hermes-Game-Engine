@@ -47,36 +47,88 @@ func _add_key(action: StringName, keycode: Key) -> void:
 
 func _build_environment() -> void:
 	var environment_node := WorldEnvironment.new()
+	environment_node.name = "PremiumEnvironment"
+
 	var environment := Environment.new()
-	environment.background_mode = Environment.BG_COLOR
-	environment.background_color = Color("#8ed4ff")
-	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	var sky := Sky.new()
+	var sky_material := ProceduralSkyMaterial.new()
+	sky_material.sky_top_color = Color("#4b9fe8")
+	sky_material.sky_horizon_color = Color("#b9e4ff")
+	sky_material.ground_horizon_color = Color("#c8d6ad")
+	sky_material.ground_bottom_color = Color("#526a42")
+	sky_material.sun_angle_max = 22.0
+	sky_material.sun_curve = 0.08
+	sky.sky_material = sky_material
+
+	environment.background_mode = Environment.BG_SKY
+	environment.sky = sky
+	environment.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	environment.ambient_light_color = Color("#d9e9f2")
-	environment.ambient_light_energy = 0.78
+	environment.ambient_light_energy = 0.72
+	environment.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
+	environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	environment.tonemap_exposure = 1.08
+	environment.adjustment_enabled = true
+	environment.adjustment_brightness = 1.03
+	environment.adjustment_contrast = 1.06
+	environment.adjustment_saturation = 1.08
+
+	_set_env_if_exists(environment, "ssao_enabled", true)
+	_set_env_if_exists(environment, "ssao_radius", 1.6)
+	_set_env_if_exists(environment, "ssao_intensity", 2.0)
+	_set_env_if_exists(environment, "ssil_enabled", true)
+	_set_env_if_exists(environment, "glow_enabled", true)
+	_set_env_if_exists(environment, "glow_intensity", 0.42)
+	_set_env_if_exists(environment, "glow_bloom", 0.045)
+	_set_env_if_exists(environment, "fog_enabled", true)
+	_set_env_if_exists(environment, "fog_light_color", Color("#d7e9f5"))
+	_set_env_if_exists(environment, "fog_density", 0.0012)
+	_set_env_if_exists(environment, "fog_sky_affect", 0.08)
+
 	environment_node.environment = environment
 	add_child(environment_node)
 
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-48.0, -32.0, 0.0)
-	sun.light_energy = 1.55
+	sun.name = "Sun"
+	sun.rotation_degrees = Vector3(-46.0, -34.0, 0.0)
+	sun.light_color = Color("#fff2d3")
+	sun.light_energy = 1.65
 	sun.shadow_enabled = true
 	add_child(sun)
 
-	var grass := MeshInstance3D.new()
-	var plane := PlaneMesh.new()
-	plane.size = Vector2(125.0, 125.0)
-	grass.mesh = plane
-	grass.position.y = -0.04
-
-	var grass_material := StandardMaterial3D.new()
-	grass_material.albedo_color = Color("#65a94e")
-	grass_material.roughness = 1.0
-	grass.material_override = grass_material
-	add_child(grass)
+	var terrain := TerrainBuilder3D.new()
+	terrain.name = "RollingTerrain"
+	add_child(terrain)
 
 	_build_scenery()
 	_build_pit_complex()
 	_build_trackside_festival()
+
+func _set_env_if_exists(environment: Environment, property_name: String, value: Variant) -> void:
+	for info in environment.get_property_list():
+		if String(info.name) == property_name:
+			environment.set(property_name, value)
+			return
+
+func _spawn_asset(
+	asset_name: String,
+	position_value: Vector3,
+	scale_value: float = 1.0,
+	rotation_degrees_y: float = 0.0
+) -> Node3D:
+	var asset := AssetLibrary3D.instantiate_asset(asset_name)
+	if asset == null:
+		return null
+
+	asset.position = Vector3(
+		position_value.x,
+		TerrainBuilder3D.height_at(position_value.x, position_value.z) + position_value.y,
+		position_value.z
+	)
+	asset.scale = Vector3.ONE * scale_value
+	asset.rotation.y = deg_to_rad(rotation_degrees_y)
+	add_child(asset)
+	return asset
 
 func _build_scenery() -> void:
 	var tree_positions := [
@@ -92,8 +144,24 @@ func _build_scenery() -> void:
 		_create_tree(tree_positions[i], 0.9 + float(i % 4) * 0.12)
 
 func _create_tree(position_value: Vector3, scale_value: float) -> void:
+	var tree := AssetLibrary3D.instantiate_asset("tree_lush")
+	if tree:
+		tree.position = Vector3(
+			position_value.x,
+			TerrainBuilder3D.height_at(position_value.x, position_value.z),
+			position_value.z
+		)
+		tree.scale = Vector3.ONE * scale_value
+		tree.rotation.y = deg_to_rad(fmod(absf(position_value.x * 13.0 + position_value.z * 7.0), 360.0))
+		add_child(tree)
+		return
+
 	var root := Node3D.new()
-	root.position = position_value
+	root.position = Vector3(
+		position_value.x,
+		TerrainBuilder3D.height_at(position_value.x, position_value.z),
+		position_value.z
+	)
 	root.scale = Vector3.ONE * scale_value
 	add_child(root)
 
@@ -118,7 +186,7 @@ func _create_tree(position_value: Vector3, scale_value: float) -> void:
 	crown.position.y = 3.0
 
 	var crown_material := StandardMaterial3D.new()
-	crown_material.albedo_color = Color("#3f8d46") if int(position_value.x + position_value.z) % 2 == 0 else Color("#4e9d4d")
+	crown_material.albedo_color = Color("#3f8d46")
 	crown_material.roughness = 0.95
 	crown.material_override = crown_material
 	root.add_child(crown)
@@ -184,6 +252,13 @@ func _build_pit_complex() -> void:
 			seat_material.albedo_color = Color("#2f7fff") if (column + row) % 2 == 0 else Color("#f0d44b")
 			seat.material_override = seat_material
 			pit_root.add_child(seat)
+
+	_spawn_asset("grandstand", Vector3(19.0, 0.15, 54.0), 1.18, 180.0)
+	_spawn_asset("service_van", Vector3(-7.0, 0.10, 51.5), 0.92, 92.0)
+	_spawn_asset("light_mast", Vector3(-38.0, 0.0, 46.0), 1.0, 0.0)
+	_spawn_asset("light_mast", Vector3(41.0, 0.0, 44.0), 1.0, 180.0)
+	_spawn_asset("light_mast", Vector3(53.0, 0.0, -21.0), 0.92, -90.0)
+	_spawn_asset("light_mast", Vector3(-54.0, 0.0, -24.0), 0.92, 90.0)
 
 func _build_trackside_festival() -> void:
 	var root := Node3D.new()
@@ -281,6 +356,30 @@ func _build_trackside_festival() -> void:
 		cone_mesh.position.y = 0.28
 		cone_mesh.material_override = RaceCarVisual3D.material(Color("#ff7a2f"), 0.7, 0.0)
 		cone.add_child(cone_mesh)
+
+	# Imported GLB props from the Blender asset pipeline.
+	for tent_data in [
+		[Vector3(-53.0, 0.0, 10.0), 1.0, 72.0],
+		[Vector3(51.0, 0.0, 19.0), 0.95, -78.0],
+		[Vector3(12.0, 0.0, 54.0), 0.90, 176.0]
+	]:
+		_spawn_asset("paddock_tent", tent_data[0], float(tent_data[1]), float(tent_data[2]))
+
+	for stack_data in [
+		[Vector3(-49.0, 0.0, -31.0), 1.0],
+		[Vector3(-45.0, 0.0, -34.0), 1.0],
+		[Vector3(49.0, 0.0, 31.0), 0.95],
+		[Vector3(44.0, 0.0, 35.0), 0.95]
+	]:
+		_spawn_asset("tire_stack", stack_data[0], float(stack_data[1]), 0.0)
+
+	for cone_index in range(10):
+		_spawn_asset(
+			"track_cone",
+			Vector3(-14.0 + float(cone_index) * 2.1, 0.03, 46.5),
+			0.85,
+			0.0
+		)
 
 func _build_track() -> void:
 	track = TrackSpline.new()

@@ -133,7 +133,10 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 	_apply_collision_damage()
 
-	global_position.y = ride_height
+	var surface_height := TerrainBuilder3D.height_at(global_position.x, global_position.z)
+	if track != null and track.is_on_track(global_position, 1.8):
+		surface_height = track.get_closest_world_point(global_position).y
+	global_position.y = surface_height + ride_height
 	rotation.x = 0.0
 	rotation.z = 0.0
 	speed_kmh = absf(forward_speed) * 3.6
@@ -255,7 +258,10 @@ func _spawn_skid_marks() -> void:
 		marker.material_override = material
 
 		var world_position := to_global(local_position)
-		marker.global_position = Vector3(world_position.x, 0.035, world_position.z)
+		var mark_height := TerrainBuilder3D.height_at(world_position.x, world_position.z)
+		if track != null and track.is_on_track(world_position, 1.2):
+			mark_height = track.get_closest_world_point(world_position).y
+		marker.global_position = Vector3(world_position.x, mark_height + 0.025, world_position.z)
 		marker.global_rotation = Vector3(0.0, global_rotation.y, 0.0)
 		_skid_root.add_child(marker)
 		_skid_marks.append(marker)

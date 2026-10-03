@@ -20,6 +20,18 @@ var _test_sample_timer: float = 0.0
 var _test_samples: Array[Dictionary] = []
 var _last_test_summary: Dictionary = {}
 
+const RUNTIME_ASSETS: Array[String] = [
+	"grandstand",
+	"light_mast",
+	"paddock_tent",
+	"service_van",
+	"tire_stack",
+	"track_cone",
+	"tree_lush"
+]
+
+var _runtime_assets: Array[Node3D] = []
+
 func _ready() -> void:
 	var error := _server.listen(port, "127.0.0.1")
 	if error == OK:
@@ -95,8 +107,60 @@ func _handle_line(peer: StreamPeerTCP, line: String) -> void:
 			if replay_manager:
 				replay_manager.start_replay()
 			_send(peer, {"ok": true})
+		"asset_inventory":
+			_send(peer, {"ok": true, "assets": RUNTIME_ASSETS, "spawned": _runtime_assets.size()})
+		"spawn_asset":
+			_send(peer, _spawn_runtime_asset(payload))
+		"clear_runtime_assets":
+			_clear_runtime_assets()
+			_send(peer, {"ok": true, "spawned": 0})
 		_:
 			_send(peer, {"ok": false, "error": "unknown_command", "command": command})
+
+func _spawn_runtime_asset(payload: Dictionary) -> Dictionary:
+	var asset_name := String(payload.get("asset", ""))
+	if not RUNTIME_ASSETS.has(asset_name):
+		return {"ok": false, "error": "asset_not_allowed", "asset": asset_name}
+
+	var instance := AssetLibrary3D.instantiate_asset(asset_name)
+	if instance == null:
+		return {"ok": false, "error": "asset_missing", "asset": asset_name}
+
+	var x := clampf(float(payload.get("x", 0.0)), -70.0, 70.0)
+	var z := clampf(float(payload.get("z", 0.0)), -70.0, 70.0)
+	var scale_value := clampf(float(payload.get("scale", 1.0)), 0.35, 2.5)
+	var rotation_value := clampf(float(payload.get("rotation", 0.0)), -360.0, 360.0)
+	var surface_y := TerrainBuilder3D.height_at(x, z)
+
+	instance.name = "HermesAsset_%s_%d" % [asset_name, _runtime_assets.size() + 1]
+	instance.position = Vector3(x, surface_y, z)
+	instance.scale = Vector3.ONE * scale_value
+	instance.rotation.y = deg_to_rad(rotation_value)
+
+	var scene := get_tree().current_scene
+	if scene == null:
+		instance.free()
+		return {"ok": false, "error": "scene_unavailable"}
+
+	scene.add_child(instance)
+	_runtime_assets.append(instance)
+
+	return {
+		"ok": true,
+		"asset": asset_name,
+		"x": snappedf(x, 0.01),
+		"y": snappedf(surface_y, 0.01),
+		"z": snappedf(z, 0.01),
+		"scale": snappedf(scale_value, 0.01),
+		"rotation": snappedf(rotation_value, 0.1),
+		"spawned": _runtime_assets.size()
+	}
+
+func _clear_runtime_assets() -> void:
+	for asset in _runtime_assets:
+		if is_instance_valid(asset):
+			asset.queue_free()
+	_runtime_assets.clear()
 
 func _apply_tuning(values: Dictionary) -> void:
 	if player == null:
@@ -250,6 +314,11 @@ func _telemetry() -> Dictionary:
 		payload["best_lap"] = race_manager.best_lap_time
 	payload["test_run"] = _test_status()
 	payload["replay_active"] = replay_manager.replay_active if replay_manager else false
+	payload["asset_pipeline"] = {
+		"format": "GLB/GLTF",
+		"available": RUNTIME_ASSETS,
+		"runtime_spawned": _runtime_assets.size()
+	}
 	return payload
 
 func _send(peer: StreamPeerTCP, payload: Dictionary) -> void:
