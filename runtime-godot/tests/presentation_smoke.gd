@@ -27,6 +27,12 @@ func _init() -> void:
 	assert(detail_rig.get_child_count() >= 6, "Vehicle lights/aero details incomplete")
 	assert(player.get_node_or_null("EngineAudio") != null, "Engine audio missing")
 	assert(player.get_node_or_null("TiresAndImpactAudio") != null, "Vehicle FX audio missing")
+	assert(player.get_node_or_null("TireSmokeGPU") is GPUParticles3D, "GPU tire smoke missing")
+	assert(player.get_node_or_null("OffroadDustGPU") is GPUParticles3D, "GPU offroad dust missing")
+	assert(player.get_node_or_null("GravelDebrisGPU") is GPUParticles3D, "GPU gravel debris missing")
+	assert(world.get_node_or_null("PremiumEnvironment") != null, "Premium environment missing")
+	assert(world.get_node_or_null("Sun") != null, "Cinematic sun missing")
+	assert(world.get_node_or_null("SkyFill") != null, "Cool sky fill missing")
 
 	var canvas: CanvasLayer = null
 	for child in manager.get_children():
@@ -51,6 +57,10 @@ func _init() -> void:
 	await process_frame
 	var skid_root := world.get_node_or_null("SkidMarks")
 	assert(skid_root != null and skid_root.get_child_count() >= 2, "Skid marks failed to spawn")
+
+	player._spawn_sparks(0.8)
+	await process_frame
+	assert(world.get_node_or_null("ImpactSparksGPU") is GPUParticles3D, "GPU impact sparks failed to spawn")
 
 	print(
 		"HGE_PRESENTATION_OK fov=", camera.base_fov,

@@ -35,6 +35,10 @@ func _init() -> void:
 	assert(road_material.shader != null, "Road shader missing")
 	assert(road_material.shader.code.contains("left_lane"), "Road racing-line layer missing")
 	assert(road_material.shader.code.contains("repair"), "Road repair/seam layer missing")
+	var curb_material := WorldMaterials3D.curb_material()
+	assert(curb_material.shader != null and curb_material.shader.code.contains("edge_wear"), "Curb wear shader missing")
+	var runoff_material := WorldMaterials3D.runoff_material()
+	assert(runoff_material.shader != null and runoff_material.shader.code.contains("gravelness"), "Runoff/gravel shader missing")
 
 	car.free()
 	for instance in instances:

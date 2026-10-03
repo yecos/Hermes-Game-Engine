@@ -170,6 +170,9 @@ var _skid_marks: Array[Node3D] = []
 var _skid_timer: float = 0.0
 var _smoke_timer: float = 0.0
 var _dust_timer: float = 0.0
+var _tire_smoke_gpu: GPUParticles3D
+var _offroad_dust_gpu: GPUParticles3D
+var _gravel_debris_gpu: GPUParticles3D
 var _engine_audio: EngineAudio3D
 var _fx_audio: VehicleFxAudio3D
 var _brake_light_material: StandardMaterial3D
@@ -1100,18 +1103,40 @@ func _update_effects(delta: float) -> void:
 
 	var braking_skid := brake_input > 0.78 and speed_kmh > 55.0
 	var should_skid := speed_kmh > 28.0 and (drift_intensity > 0.16 or braking_skid)
+	var smoke_active := speed_kmh > 34.0 and (drift_intensity > 0.22 or braking_skid)
+	var offroad_active := is_offroad and speed_kmh > 16.0
+	var speed_fx := clampf(speed_kmh / 120.0, 0.0, 1.0)
+
+	if _tire_smoke_gpu:
+		_tire_smoke_gpu.emitting = smoke_active
+		_tire_smoke_gpu.amount_ratio = clampf(
+			maxf(drift_intensity, 0.48 if braking_skid else 0.0),
+			0.18 if smoke_active else 0.0,
+			1.0
+		) if smoke_active else 0.0
+
+	if _offroad_dust_gpu:
+		_offroad_dust_gpu.emitting = offroad_active
+		_offroad_dust_gpu.amount_ratio = clampf(0.28 + speed_fx * 0.72, 0.0, 1.0) if offroad_active else 0.0
+
+	if _gravel_debris_gpu:
+		var debris_active := offroad_active and speed_kmh > 34.0
+		_gravel_debris_gpu.emitting = debris_active
+		_gravel_debris_gpu.amount_ratio = clampf(0.20 + speed_fx * 0.70, 0.0, 0.90) if debris_active else 0.0
 
 	if should_skid and _skid_timer <= 0.0:
 		_spawn_skid_marks(clampf(maxf(drift_intensity, 0.42 if braking_skid else 0.0), 0.18, 1.0))
 		_skid_timer = lerpf(0.075, 0.035, drift_intensity)
 
-	if drift_intensity > 0.26 and speed_kmh > 36.0 and _smoke_timer <= 0.0:
+	# CPU puffs remain only as occasional larger volume accents; the continuous
+	# trail now comes from the GPU emitters above.
+	if drift_intensity > 0.58 and speed_kmh > 42.0 and _smoke_timer <= 0.0:
 		_spawn_smoke_puff(drift_intensity)
-		_smoke_timer = lerpf(0.105, 0.042, drift_intensity)
+		_smoke_timer = lerpf(0.22, 0.12, drift_intensity)
 
-	if is_offroad and speed_kmh > 18.0 and _dust_timer <= 0.0:
-		_spawn_dust_puff(clampf(speed_kmh / 105.0, 0.18, 1.0))
-		_dust_timer = lerpf(0.11, 0.048, clampf(speed_kmh / 120.0, 0.0, 1.0))
+	if offroad_active and speed_kmh > 42.0 and _dust_timer <= 0.0:
+		_spawn_dust_puff(clampf(speed_kmh / 105.0, 0.28, 1.0))
+		_dust_timer = lerpf(0.20, 0.10, speed_fx)
 
 func _spawn_skid_marks(intensity: float) -> void:
 	if _skid_root == null or not _skid_root.is_inside_tree():
@@ -1286,6 +1311,139 @@ func _build_effects() -> void:
 	_skid_root.name = "SkidMarks"
 	call_deferred("_attach_skid_root")
 
+	_tire_smoke_gpu = _create_gpu_billboard_emitter(
+		"TireSmokeGPU",
+		Color(0.78, 0.81, 0.83, 0.34),
+		72,
+		0.88,
+		Vector3(0.70, 0.03, 0.12),
+		Vector3(0.0, 0.88, 0.28),
+		46.0,
+		0.55,
+		1.55,
+		0.34,
+		0.92,
+		Vector3(0.0, 0.48, 0.0),
+		0.28
+	)
+	_tire_smoke_gpu.position = Vector3(0.0, 0.18, 1.12)
+
+	_offroad_dust_gpu = _create_gpu_billboard_emitter(
+		"OffroadDustGPU",
+		Color(0.48, 0.39, 0.26, 0.42),
+		84,
+		0.78,
+		Vector3(0.74, 0.04, 0.14),
+		Vector3(0.0, 0.60, 0.62),
+		58.0,
+		1.10,
+		3.20,
+		0.32,
+		0.88,
+		Vector3(0.0, -0.30, 0.0),
+		0.30
+	)
+	_offroad_dust_gpu.position = Vector3(0.0, 0.12, 1.08)
+
+	_gravel_debris_gpu = _create_gpu_debris_emitter()
+	_gravel_debris_gpu.position = Vector3(0.0, 0.10, 1.05)
+
+func _create_gpu_billboard_emitter(
+	name_value: String,
+	base_color: Color,
+	amount_value: int,
+	lifetime_value: float,
+	box_extents: Vector3,
+	direction_value: Vector3,
+	spread_value: float,
+	velocity_min: float,
+	velocity_max: float,
+	scale_min_value: float,
+	scale_max_value: float,
+	gravity_value: Vector3,
+	quad_size: float
+) -> GPUParticles3D:
+	var particles := GPUParticles3D.new()
+	particles.name = name_value
+	particles.amount = amount_value
+	particles.lifetime = lifetime_value
+	particles.randomness = 0.42
+	particles.emitting = false
+	particles.local_coords = false
+	particles.fixed_fps = 30
+	particles.visibility_aabb = AABB(Vector3(-8.0, -2.0, -8.0), Vector3(16.0, 10.0, 16.0))
+
+	var process := ParticleProcessMaterial.new()
+	process.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	process.emission_box_extents = box_extents
+	process.direction = direction_value.normalized()
+	process.spread = spread_value
+	process.initial_velocity_min = velocity_min
+	process.initial_velocity_max = velocity_max
+	process.gravity = gravity_value
+	process.scale_min = scale_min_value
+	process.scale_max = scale_max_value
+
+	var gradient := Gradient.new()
+	gradient.set_color(0, Color(base_color.r, base_color.g, base_color.b, 0.0))
+	gradient.add_point(0.10, base_color)
+	gradient.add_point(0.56, Color(base_color.r, base_color.g, base_color.b, base_color.a * 0.68))
+	gradient.set_color(1, Color(base_color.r, base_color.g, base_color.b, 0.0))
+	var gradient_texture := GradientTexture1D.new()
+	gradient_texture.gradient = gradient
+	process.color_ramp = gradient_texture
+	particles.process_material = process
+
+	var puff_mesh := SphereMesh.new()
+	puff_mesh.radius = quad_size * 0.50
+	puff_mesh.height = quad_size
+	puff_mesh.radial_segments = 8
+	puff_mesh.rings = 4
+	var draw_material := StandardMaterial3D.new()
+	draw_material.albedo_color = Color(1.0, 1.0, 1.0, clampf(base_color.a * 0.45, 0.08, 0.22))
+	draw_material.vertex_color_use_as_albedo = true
+	draw_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	draw_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	draw_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	puff_mesh.material = draw_material
+	particles.draw_pass_1 = puff_mesh
+	add_child(particles)
+	return particles
+
+func _create_gpu_debris_emitter() -> GPUParticles3D:
+	var particles := GPUParticles3D.new()
+	particles.name = "GravelDebrisGPU"
+	particles.amount = 54
+	particles.lifetime = 0.58
+	particles.randomness = 0.55
+	particles.emitting = false
+	particles.local_coords = false
+	particles.fixed_fps = 30
+	particles.visibility_aabb = AABB(Vector3(-7.0, -2.0, -7.0), Vector3(14.0, 8.0, 14.0))
+
+	var process := ParticleProcessMaterial.new()
+	process.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	process.emission_box_extents = Vector3(0.72, 0.025, 0.12)
+	process.direction = Vector3(0.0, 0.72, 0.68).normalized()
+	process.spread = 72.0
+	process.initial_velocity_min = 2.2
+	process.initial_velocity_max = 5.8
+	process.gravity = Vector3(0.0, -7.2, 0.0)
+	process.scale_min = 0.55
+	process.scale_max = 1.35
+	process.color = Color("#9c8766")
+	particles.process_material = process
+
+	var stone_mesh := BoxMesh.new()
+	stone_mesh.size = Vector3(0.035, 0.025, 0.055)
+	var stone_material := StandardMaterial3D.new()
+	stone_material.albedo_color = Color("#9c8766")
+	stone_material.roughness = 0.98
+	stone_mesh.material = stone_material
+	particles.draw_pass_1 = stone_mesh
+	add_child(particles)
+	return particles
+
 func _attach_skid_root() -> void:
 	if _skid_root == null or _skid_root.is_inside_tree():
 		return
@@ -1442,40 +1600,53 @@ func _spawn_sparks(strength: float) -> void:
 	if world == null:
 		return
 
+	var particles := GPUParticles3D.new()
+	particles.name = "ImpactSparksGPU"
+	particles.amount = int(lerpf(14.0, 34.0, strength))
+	particles.lifetime = lerpf(0.28, 0.48, strength)
+	particles.one_shot = true
+	particles.explosiveness = 1.0
+	particles.randomness = 0.65
+	particles.local_coords = false
+	particles.visibility_aabb = AABB(Vector3(-5.0, -2.0, -5.0), Vector3(10.0, 8.0, 10.0))
+
+	var process := ParticleProcessMaterial.new()
+	process.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	process.emission_sphere_radius = 0.15
+	process.direction = Vector3(0.0, 0.72, 0.18).normalized()
+	process.spread = 82.0
+	process.initial_velocity_min = lerpf(2.8, 5.0, strength)
+	process.initial_velocity_max = lerpf(5.5, 9.0, strength)
+	process.gravity = Vector3(0.0, -9.8, 0.0)
+	process.scale_min = 0.65
+	process.scale_max = 1.35
+
+	var gradient := Gradient.new()
+	gradient.set_color(0, Color("#fff3a3"))
+	gradient.add_point(0.34, Color("#ffb13b"))
+	gradient.set_color(1, Color(1.0, 0.22, 0.02, 0.0))
+	var color_texture := GradientTexture1D.new()
+	color_texture.gradient = gradient
+	process.color_ramp = color_texture
+	particles.process_material = process
+
+	var spark_mesh := BoxMesh.new()
+	spark_mesh.size = Vector3(0.026, 0.026, 0.16 + strength * 0.12)
 	var spark_material := StandardMaterial3D.new()
-	spark_material.albedo_color = Color("#ffd56a")
+	spark_material.albedo_color = Color.WHITE
+	spark_material.vertex_color_use_as_albedo = true
 	spark_material.emission_enabled = true
 	spark_material.emission = Color("#ff9d32")
-	spark_material.emission_energy_multiplier = 2.5
-	spark_material.roughness = 0.3
+	spark_material.emission_energy_multiplier = 3.8
+	spark_material.roughness = 0.24
+	spark_mesh.material = spark_material
+	particles.draw_pass_1 = spark_mesh
 
-	var count := int(lerpf(5.0, 13.0, strength))
-	for _i in range(count):
-		var spark := MeshInstance3D.new()
-		var mesh := BoxMesh.new()
-		mesh.size = Vector3(0.035, 0.035, 0.18 + strength * 0.14)
-		spark.mesh = mesh
-		spark.material_override = spark_material.duplicate()
-		world.add_child(spark)
-		spark.global_position = global_position + Vector3.UP * 0.28
-		spark.rotation = Vector3(
-			randf_range(-0.9, 0.9),
-			randf_range(-PI, PI),
-			randf_range(-0.9, 0.9)
-		)
-
-		var direction := Vector3(
-			randf_range(-1.0, 1.0),
-			randf_range(0.25, 1.25),
-			randf_range(-1.0, 1.0)
-		).normalized()
-		var target := spark.global_position + direction * randf_range(1.0, 2.8) * strength
-
-		var tween := create_tween()
-		tween.set_parallel(true)
-		tween.tween_property(spark, "global_position", target, 0.30)
-		tween.tween_property(spark, "scale", Vector3.ZERO, 0.30)
-		tween.chain().tween_callback(spark.queue_free)
+	world.add_child(particles)
+	particles.global_position = global_position + Vector3.UP * 0.30
+	particles.finished.connect(particles.queue_free)
+	particles.emitting = true
+	particles.restart()
 
 func _build_visual() -> void:
 	var built: Dictionary = RaceCarVisual3D.build(self, body_color, Color("#f6f4ed"))

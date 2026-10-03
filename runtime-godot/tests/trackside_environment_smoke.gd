@@ -30,6 +30,9 @@ func _init() -> void:
 	assert(safe.get_node_or_null("DistantLandscape") != null, "Distant landscape missing")
 	assert(safe.get_node_or_null("ShrubClusters") != null, "Shrub clusters missing")
 	assert(safe.get_node_or_null("CrowdClusters") != null, "Crowd clusters missing")
+	assert(safe.get_node_or_null("CrowdClusters/CrowdHeads") != null, "Crowd head layer missing")
+	assert(safe.get_node_or_null("ProPitComplex/PitCrew/PitCrewBodies") != null, "Pit crew bodies missing")
+	assert(safe.get_node_or_null("ProPitComplex/PitCrew/PitCrewHelmets") != null, "Pit crew helmets missing")
 	assert(track.get_node_or_null("Guardrails/CornerPanelsRed") != null, "Red corner impact panels missing")
 	assert(track.get_node_or_null("Guardrails/CornerPanelsWhite") != null, "White corner impact panels missing")
 
@@ -46,6 +49,9 @@ func _init() -> void:
 			garage_count += 1
 
 	assert(garage_count >= 5, "Too few pit garages generated")
+	var garage_01 := pit.get_node_or_null("Garage_01")
+	assert(garage_01 != null and garage_01.get_node_or_null("WorkLight") != null, "Pit work lighting missing")
+	assert(garage_01.get_node_or_null("ToolCabinet") != null, "Pit tool cabinet missing")
 	assert(brakes.get_child_count() >= 10, "Too few braking reference boards generated")
 	assert(sponsors.get_child_count() >= 5, "Too few sponsor boards generated")
 	assert(corner_safety.get_child_count() >= 8, "Too few corner safety props generated")

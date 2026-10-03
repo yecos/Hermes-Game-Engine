@@ -64,54 +64,69 @@ func _build_environment() -> void:
 	var environment := Environment.new()
 	var sky := Sky.new()
 	var sky_material := ProceduralSkyMaterial.new()
-	sky_material.sky_top_color = Color("#337fc1")
-	sky_material.sky_horizon_color = Color("#acd8ee")
-	sky_material.ground_horizon_color = Color("#c8d6ad")
-	sky_material.ground_bottom_color = Color("#526a42")
-	sky_material.sun_angle_max = 22.0
-	sky_material.sun_curve = 0.08
+	sky_material.sky_top_color = Color("#245f92")
+	sky_material.sky_horizon_color = Color("#b8d7df")
+	sky_material.ground_horizon_color = Color("#b9c9a1")
+	sky_material.ground_bottom_color = Color("#3d5237")
+	sky_material.sun_angle_max = 18.0
+	sky_material.sun_curve = 0.06
 	sky.sky_material = sky_material
 
 	environment.background_mode = Environment.BG_SKY
 	environment.sky = sky
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	environment.ambient_light_color = Color("#d9e9f2")
-	environment.ambient_light_energy = 0.62
+	environment.ambient_light_color = Color("#c5d9e4")
+	environment.ambient_light_energy = 0.50
 	environment.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 	environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	environment.tonemap_exposure = 0.98
+	environment.tonemap_exposure = 1.03
 	environment.adjustment_enabled = true
 	environment.adjustment_brightness = 1.0
-	environment.adjustment_contrast = 1.09
-	environment.adjustment_saturation = 1.05
+	environment.adjustment_contrast = 1.13
+	environment.adjustment_saturation = 1.04
 
 	_set_env_if_exists(environment, "ssao_enabled", true)
-	_set_env_if_exists(environment, "ssao_radius", 1.6)
-	_set_env_if_exists(environment, "ssao_intensity", 2.0)
+	_set_env_if_exists(environment, "ssao_radius", 1.45)
+	_set_env_if_exists(environment, "ssao_intensity", 2.20)
 	_set_env_if_exists(environment, "ssil_enabled", true)
 	_set_env_if_exists(environment, "glow_enabled", true)
-	_set_env_if_exists(environment, "glow_intensity", 0.42)
-	_set_env_if_exists(environment, "glow_bloom", 0.045)
+	_set_env_if_exists(environment, "glow_intensity", 0.34)
+	_set_env_if_exists(environment, "glow_bloom", 0.040)
 	_set_env_if_exists(environment, "fog_enabled", true)
-	_set_env_if_exists(environment, "fog_light_color", Color("#d7e9f5"))
-	_set_env_if_exists(environment, "fog_density", 0.00055)
-	_set_env_if_exists(environment, "fog_sky_affect", 0.04)
+	_set_env_if_exists(environment, "fog_light_color", Color("#cbdde2"))
+	_set_env_if_exists(environment, "fog_density", 0.00038)
+	_set_env_if_exists(environment, "fog_sky_affect", 0.03)
+	_set_env_if_exists(environment, "volumetric_fog_enabled", true)
+	_set_env_if_exists(environment, "volumetric_fog_density", 0.0032)
+	_set_env_if_exists(environment, "volumetric_fog_length", 125.0)
+	_set_env_if_exists(environment, "volumetric_fog_ambient_inject", 0.22)
+	_set_env_if_exists(environment, "volumetric_fog_sky_affect", 0.08)
 
 	environment_node.environment = environment
 	add_child(environment_node)
 
 	var sun := DirectionalLight3D.new()
 	sun.name = "Sun"
-	sun.rotation_degrees = Vector3(-46.0, -34.0, 0.0)
-	sun.light_color = Color("#fff2d3")
-	sun.light_energy = 1.45
+	sun.rotation_degrees = Vector3(-38.0, -42.0, 0.0)
+	sun.light_color = Color("#ffdda9")
+	sun.light_energy = 1.68
 	sun.shadow_enabled = true
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
-	sun.directional_shadow_max_distance = 260.0
-	sun.shadow_blur = 1.15
-	sun.shadow_bias = 0.055
-	sun.shadow_normal_bias = 1.35
+	sun.directional_shadow_max_distance = 300.0
+	sun.shadow_blur = 1.05
+	sun.shadow_bias = 0.050
+	sun.shadow_normal_bias = 1.20
 	add_child(sun)
+
+	# A low-energy cool fill keeps the shaded side of cars and pit buildings
+	# readable while preserving a strong warm key-light direction.
+	var sky_fill := DirectionalLight3D.new()
+	sky_fill.name = "SkyFill"
+	sky_fill.rotation_degrees = Vector3(-26.0, 136.0, 0.0)
+	sky_fill.light_color = Color("#9fc6df")
+	sky_fill.light_energy = 0.18
+	sky_fill.shadow_enabled = false
+	add_child(sky_fill)
 
 	var terrain := TerrainBuilder3D.new()
 	terrain.name = "RollingTerrain"
@@ -400,6 +415,8 @@ func _build_pro_pit_complex(root: Node3D) -> void:
 	var graphite := _make_trackside_material(Color("#20252b"), 0.58, 0.18)
 	var accent := _make_trackside_material(Color("#d73c42"), 0.46, 0.10)
 	var glass := _make_trackside_material(Color("#243b49"), 0.18, 0.10)
+	var work_light := _make_trackside_material(Color("#f6f0d8"), 0.28, 0.02, Color("#fff1bd"))
+	var cabinet := _make_trackside_material(Color("#b72f36"), 0.56, 0.14)
 
 	for i in range(7):
 		var ratio := fposmod(0.962 + float(i) * 0.0034, 1.0)
@@ -413,12 +430,33 @@ func _build_pro_pit_complex(root: Node3D) -> void:
 		garage.add_to_group("safe_trackside_prop")
 		pit_root.add_child(garage)
 
-		_add_trackside_box(garage, "Shell", Vector3(7.2, 3.4, 7.6), Vector3(0.0, 1.7, 0.0), concrete)
-		_add_trackside_box(garage, "Door", Vector3(0.14, 2.35, 5.2), Vector3(-3.66, 1.30, 0.0), graphite)
-		_add_trackside_box(garage, "Fascia", Vector3(0.22, 0.62, 7.35), Vector3(-3.72, 3.00, 0.0), accent)
-		_add_trackside_box(garage, "Window", Vector3(0.12, 0.72, 2.1), Vector3(-3.75, 2.25, 2.1), glass)
+		# Open-front garage shell: three walls + floor instead of a solid block.
+		# The track-facing side stays open so equipment and crew are actually visible.
+		_add_trackside_box(garage, "BackWall", Vector3(0.28, 3.4, 7.6), Vector3(3.46, 1.70, 0.0), concrete)
+		_add_trackside_box(garage, "SideWallL", Vector3(7.0, 3.4, 0.24), Vector3(0.0, 1.70, -3.68), concrete)
+		_add_trackside_box(garage, "SideWallR", Vector3(7.0, 3.4, 0.24), Vector3(0.0, 1.70, 3.68), concrete)
+		_add_trackside_box(garage, "Floor", Vector3(7.0, 0.16, 7.35), Vector3(0.0, 0.08, 0.0), graphite)
+		_add_trackside_box(garage, "DoorHeader", Vector3(0.24, 0.50, 7.10), Vector3(-3.54, 2.92, 0.0), graphite)
+		_add_trackside_box(garage, "DoorJambL", Vector3(0.24, 2.70, 0.24), Vector3(-3.54, 1.35, -3.43), graphite)
+		_add_trackside_box(garage, "DoorJambR", Vector3(0.24, 2.70, 0.24), Vector3(-3.54, 1.35, 3.43), graphite)
+		_add_trackside_box(garage, "Fascia", Vector3(0.22, 0.62, 7.35), Vector3(-3.72, 3.18, 0.0), accent)
 		_add_trackside_box(garage, "Roof", Vector3(7.55, 0.24, 7.95), Vector3(0.0, 3.52, 0.0), graphite)
-		_create_dual_label(garage, "PIT %02d" % (i + 1), Vector3(-3.82, 3.00, 0.0), 36, 0.015, Color.WHITE, 90.0)
+		_add_trackside_box(garage, "WorkLight", Vector3(0.10, 0.10, 4.8), Vector3(-1.65, 3.02, 0.0), work_light)
+		_add_trackside_box(garage, "ToolCabinet", Vector3(0.75, 1.25, 1.15), Vector3(2.85, 0.64, 2.65), cabinet)
+		_add_trackside_box(garage, "Workbench", Vector3(0.72, 0.86, 2.15), Vector3(2.80, 0.45, -2.20), graphite)
+
+		var garage_light := OmniLight3D.new()
+		garage_light.name = "GarageLight"
+		garage_light.position = Vector3(-1.45, 2.70, 0.0)
+		garage_light.light_color = Color("#fff0bd")
+		garage_light.light_energy = 0.72
+		garage_light.omni_range = 6.5
+		garage_light.shadow_enabled = false
+		garage.add_child(garage_light)
+
+		_create_dual_label(garage, "PIT %02d" % (i + 1), Vector3(-3.82, 3.18, 0.0), 36, 0.015, Color.WHITE, 90.0)
+
+	_build_pit_crew(pit_root)
 
 	# Race-control tower anchors the start/finish complex.
 	var tower_anchor := _trackside_anchor(0.992, -1.0, 14.0, true)
@@ -432,6 +470,70 @@ func _build_pro_pit_complex(root: Node3D) -> void:
 		_add_trackside_box(tower, "GlassBand", Vector3(6.7, 1.25, 7.2), Vector3(0.0, 4.35, 0.0), glass)
 		_add_trackside_box(tower, "Roof", Vector3(7.4, 0.35, 7.8), Vector3(0.0, 5.78, 0.0), accent)
 		_create_dual_label(tower, "RACE CONTROL", Vector3(0.0, 4.42, -3.68), 34, 0.015)
+
+func _build_pit_crew(pit_root: Node3D) -> void:
+	var crew_root := Node3D.new()
+	crew_root.name = "PitCrew"
+	pit_root.add_child(crew_root)
+
+	var body_transforms: Array[Transform3D] = []
+	var helmet_transforms: Array[Transform3D] = []
+	for garage_index in range(7):
+		var base_ratio := fposmod(0.962 + float(garage_index) * 0.0034, 1.0)
+		for crew_index in range(2):
+			var ratio := fposmod(base_ratio + (float(crew_index) - 0.5) * 0.00075, 1.0)
+			var anchor := _trackside_anchor(ratio, 1.0, 4.35 + float(crew_index) * 0.55, true)
+			if not bool(anchor.get("valid", false)):
+				continue
+			var base: Transform3D = anchor.transform
+
+			var body := base
+			body.origin += Vector3.UP * 0.60
+			body.basis = base.basis.scaled(Vector3(0.95, 1.0, 0.95))
+			body_transforms.append(body)
+
+			var helmet := base
+			helmet.origin += Vector3.UP * 1.28
+			helmet.basis = base.basis.scaled(Vector3(1.0, 1.0, 1.0))
+			helmet_transforms.append(helmet)
+
+	if body_transforms.is_empty():
+		return
+
+	var body_mesh := BoxMesh.new()
+	body_mesh.size = Vector3(0.34, 1.04, 0.28)
+	body_mesh.material = _make_trackside_material(Color("#20272d"), 0.80, 0.04)
+	var body_multi := MultiMesh.new()
+	body_multi.transform_format = MultiMesh.TRANSFORM_3D
+	body_multi.mesh = body_mesh
+	body_multi.instance_count = body_transforms.size()
+	for i in range(body_transforms.size()):
+		body_multi.set_instance_transform(i, body_transforms[i])
+	var bodies := MultiMeshInstance3D.new()
+	bodies.name = "PitCrewBodies"
+	bodies.multimesh = body_multi
+	bodies.visibility_range_end = 125.0
+	bodies.visibility_range_end_margin = 18.0
+	crew_root.add_child(bodies)
+
+	var helmet_mesh := SphereMesh.new()
+	helmet_mesh.radius = 0.15
+	helmet_mesh.height = 0.27
+	helmet_mesh.radial_segments = 10
+	helmet_mesh.rings = 5
+	helmet_mesh.material = _make_trackside_material(Color("#d83b43"), 0.42, 0.16)
+	var helmet_multi := MultiMesh.new()
+	helmet_multi.transform_format = MultiMesh.TRANSFORM_3D
+	helmet_multi.mesh = helmet_mesh
+	helmet_multi.instance_count = helmet_transforms.size()
+	for i in range(helmet_transforms.size()):
+		helmet_multi.set_instance_transform(i, helmet_transforms[i])
+	var helmets := MultiMeshInstance3D.new()
+	helmets.name = "PitCrewHelmets"
+	helmets.multimesh = helmet_multi
+	helmets.visibility_range_end = 125.0
+	helmets.visibility_range_end_margin = 18.0
+	crew_root.add_child(helmets)
 
 func _create_brake_marker(
 	root: Node3D,
@@ -703,6 +805,7 @@ func _build_crowd_clusters(root: Node3D) -> void:
 		Color("#e7c84b")
 	]
 	var transforms_by_color: Array[Array] = [[], [], []]
+	var head_transforms: Array[Transform3D] = []
 	var stands := [
 		[0.025, -1.0, 10.0],
 		[0.175, 1.0, 12.5],
@@ -733,6 +836,11 @@ func _build_crowd_clusters(root: Node3D) -> void:
 				var color_index := (stand_index + row + column) % 3
 				transforms_by_color[color_index].append(person)
 
+				var head := base
+				head.origin = person.origin + Vector3.UP * (0.50 * height_scale)
+				head.basis = base.basis
+				head_transforms.append(head)
+
 	for color_index in range(3):
 		var transforms: Array = transforms_by_color[color_index]
 		if transforms.is_empty():
@@ -755,6 +863,28 @@ func _build_crowd_clusters(root: Node3D) -> void:
 		crowd.visibility_range_end = 190.0
 		crowd.visibility_range_end_margin = 24.0
 		crowd_root.add_child(crowd)
+
+	if not head_transforms.is_empty():
+		var head_mesh := SphereMesh.new()
+		head_mesh.radius = 0.115
+		head_mesh.height = 0.22
+		head_mesh.radial_segments = 8
+		head_mesh.rings = 4
+		head_mesh.material = _make_trackside_material(Color("#c99a73"), 0.88, 0.0)
+
+		var head_multi := MultiMesh.new()
+		head_multi.transform_format = MultiMesh.TRANSFORM_3D
+		head_multi.mesh = head_mesh
+		head_multi.instance_count = head_transforms.size()
+		for i in range(head_transforms.size()):
+			head_multi.set_instance_transform(i, head_transforms[i])
+
+		var heads := MultiMeshInstance3D.new()
+		heads.name = "CrowdHeads"
+		heads.multimesh = head_multi
+		heads.visibility_range_end = 165.0
+		heads.visibility_range_end_margin = 20.0
+		crowd_root.add_child(heads)
 
 func _build_scenery() -> void:
 	var tree_positions := [

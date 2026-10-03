@@ -678,15 +678,10 @@ func _build_runoff_mesh() -> void:
 		_add_quad(surface, p0-r0*outer, p0-r0*edge, p1-r1*edge, p1-r1*outer, left_color, Vector2.ZERO,Vector2.RIGHT,Vector2.ONE,Vector2.DOWN,normal)
 		_add_quad(surface, p0+r0*edge, p0+r0*outer, p1+r1*outer, p1+r1*edge, right_color, Vector2.ZERO,Vector2.RIGHT,Vector2.ONE,Vector2.DOWN,normal)
 
-	var material := StandardMaterial3D.new()
-	material.vertex_color_use_as_albedo = true
-	material.roughness = 1.0
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
-
 	var mesh := MeshInstance3D.new()
 	mesh.name = "Runoff"
 	mesh.mesh = surface.commit()
-	mesh.material_override = material
+	mesh.material_override = WorldMaterials3D.runoff_material()
 	add_child(mesh)
 
 

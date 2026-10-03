@@ -122,10 +122,94 @@ void fragment() {
 	material.shader = shader
 	return material
 
-static func curb_material() -> StandardMaterial3D:
-	var material := StandardMaterial3D.new()
-	material.vertex_color_use_as_albedo = true
-	material.roughness = 0.64
-	material.metallic = 0.0
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+static func curb_material() -> ShaderMaterial:
+	var shader := Shader.new()
+	shader.code = """
+shader_type spatial;
+render_mode cull_disabled, diffuse_burley, specular_schlick_ggx;
+
+float hash21(vec2 p) {
+	p = fract(p * vec2(127.1, 311.7));
+	p += dot(p, p + 19.19);
+	return fract(p.x * p.y);
+}
+
+float noise2(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(
+		mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
+		mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x),
+		f.y
+	);
+}
+
+void fragment() {
+	vec3 base = COLOR.rgb;
+	float macro = noise2(UV * vec2(8.0, 70.0));
+	float grain = hash21(floor(UV * vec2(220.0, 1400.0)));
+	float rubber = smoothstep(0.72, 0.94, noise2(UV * vec2(22.0, 190.0) + vec2(7.0, 13.0)));
+	float scuff = smoothstep(0.68, 0.92, noise2(UV * vec2(55.0, 110.0) + vec2(3.0, 21.0)));
+	float edge_wear = smoothstep(0.32, 0.49, abs(UV.x - 0.5));
+
+	base *= 0.91 + macro * 0.08 + grain * 0.035;
+	base = mix(base, vec3(0.10, 0.095, 0.09), rubber * 0.18);
+	base = mix(base, vec3(0.58, 0.56, 0.52), scuff * edge_wear * 0.10);
+
+	ALBEDO = base;
+	ROUGHNESS = clamp(0.72 + rubber * 0.12 + scuff * 0.08, 0.62, 0.92);
+	METALLIC = 0.0;
+	SPECULAR = 0.36;
+}
+"""
+	var material := ShaderMaterial.new()
+	material.shader = shader
+	return material
+
+static func runoff_material() -> ShaderMaterial:
+	var shader := Shader.new()
+	shader.code = """
+shader_type spatial;
+render_mode cull_disabled, diffuse_burley, specular_schlick_ggx;
+
+float hash21(vec2 p) {
+	p = fract(p * vec2(269.5, 183.3));
+	p += dot(p, p + 37.17);
+	return fract(p.x * p.y);
+}
+
+float noise2(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(
+		mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
+		mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x),
+		f.y
+	);
+}
+
+void fragment() {
+	vec3 base = COLOR.rgb;
+	float brightness = dot(base, vec3(0.3333));
+	float gravelness = smoothstep(0.40, 0.58, brightness);
+	float macro = noise2(UV * vec2(10.0, 120.0));
+	float stone = hash21(floor(UV * vec2(170.0, 1250.0)));
+	float stone2 = hash21(floor(UV * vec2(420.0, 2600.0)) + 11.0);
+	float tire_dust = smoothstep(0.70, 0.92, noise2(UV * vec2(26.0, 210.0) + vec2(4.0, 19.0)));
+
+	base *= 0.88 + macro * 0.12;
+	vec3 pebble = mix(vec3(0.30, 0.28, 0.24), vec3(0.73, 0.67, 0.55), stone);
+	base = mix(base, pebble, gravelness * smoothstep(0.73, 0.98, stone2) * 0.24);
+	base = mix(base, vec3(0.24, 0.23, 0.21), tire_dust * gravelness * 0.11);
+
+	ALBEDO = base;
+	ROUGHNESS = mix(0.86, 0.995, gravelness);
+	METALLIC = 0.0;
+	SPECULAR = mix(0.38, 0.18, gravelness);
+}
+"""
+	var material := ShaderMaterial.new()
+	material.shader = shader
 	return material
