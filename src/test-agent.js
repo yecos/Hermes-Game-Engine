@@ -9,11 +9,26 @@ export class SceneTestAgent {
     const events = [];
     const issues = [];
     const warnings = [];
-    const players = scene.entities.filter((entity) => entity.type === 'player');
+    const isRace = scene.settings?.gameMode === 'racing';
+    const players = scene.entities.filter((entity) =>
+      entity.type === 'player' || (entity.type === 'car' && entity.role === 'player')
+    );
 
     events.push({ type: 'start', goal, sceneId: scene.id, sceneName: scene.name });
-    if (players.length === 0) issues.push('No player entity exists in the active scene.');
+
+    if (players.length === 0) issues.push(
+      isRace ? 'No player car exists in the racing scene.' : 'No player entity exists in the active scene.'
+    );
     if (players.length > 1) warnings.push(`The scene contains ${players.length} player entities.`);
+
+    if (isRace) {
+      const rivals = scene.entities.filter((entity) => entity.type === 'car' && entity.role === 'ai');
+      const boosts = scene.entities.filter((entity) => entity.type === 'boost');
+      if (!scene.settings?.race?.track) issues.push('Racing scene is missing track configuration.');
+      if (!scene.settings?.race?.laps) issues.push('Racing scene is missing lap configuration.');
+      if (rivals.length < 1) issues.push('Racing scene needs at least one AI rival.');
+      if (boosts.length < 1) warnings.push('Racing scene has no turbo pads.');
+    }
 
     const ids = new Set();
     for (const entity of scene.entities) {
@@ -52,7 +67,9 @@ export class SceneTestAgent {
       }
     }
 
-    const enemies = scene.entities.filter((entity) => entity.type === 'enemy');
+    const enemies = scene.entities.filter((entity) =>
+      entity.type === 'enemy' || (entity.type === 'car' && entity.role === 'ai')
+    );
     const status = issues.length ? 'fail' : warnings.length ? 'warn' : 'pass';
     const summary = status === 'pass'
       ? `Scene passed: ${scene.entities.length} entities, ${visitedTargets} collectible targets reached.`

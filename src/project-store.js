@@ -6,7 +6,23 @@ export const ENTITY_PRESETS = {
   enemy: { name: 'Enemy', color: '#ff5d7a', speed: 80, hp: 50, size: 28, behaviors: [] },
   npc: { name: 'NPC', color: '#b372ff', hp: 100, size: 28, behaviors: [] },
   coin: { name: 'Data Shard', color: '#ffd166', size: 18, behaviors: [] },
-  obstacle: { name: 'Prop', color: '#566176', w: 72, h: 48, size: 30, behaviors: [] }
+  obstacle: { name: 'Prop', color: '#566176', w: 72, h: 48, size: 30, behaviors: [] },
+  car: {
+    name: 'Race Car',
+    color: '#ff405f',
+    role: 'ai',
+    speed: 0,
+    maxSpeed: 430,
+    acceleration: 620,
+    brake: 760,
+    steering: 2.7,
+    grip: 0.985,
+    w: 30,
+    h: 54,
+    size: 38,
+    behaviors: []
+  },
+  boost: { name: 'Turbo Pad', color: '#52f5ff', w: 58, h: 26, size: 30, behaviors: [] }
 };
 
 export const TILE_TYPES = [
@@ -141,6 +157,106 @@ export class ProjectStore extends EventTarget {
   deleteEntity(idValue) {
     this.mutate('entity:delete', () => { this.activeScene.entities = this.entities.filter((entity) => entity.id !== idValue); }, { id: idValue });
     if (this.selectedId === idValue) this.select(null);
+  }
+
+  createRaceGame({
+    name = 'Arcade Grand Prix',
+    aiCount = 5,
+    laps = 3,
+    theme = 'colorful arcade circuit',
+    difficulty = 'medium'
+  } = {}) {
+    const count = Math.max(1, Math.min(9, Math.round(Number(aiCount) || 5)));
+    const totalLaps = Math.max(1, Math.min(9, Math.round(Number(laps) || 3)));
+    const level = ['easy', 'medium', 'hard'].includes(difficulty) ? difficulty : 'medium';
+
+    const scene = makeScene(name, {
+      settings: {
+        width: 1280,
+        height: 736,
+        tileSize: 32,
+        night: false,
+        gameMode: 'racing',
+        race: {
+          laps: totalLaps,
+          difficulty: level,
+          theme,
+          track: {
+            cx: 640,
+            cy: 355,
+            rx: 475,
+            ry: 265,
+            roadWidth: 142,
+            startAngle: Math.PI / 2
+          }
+        }
+      }
+    });
+
+    scene.tilemap.tiles = scene.tilemap.tiles.map((row) => row.map(() => 0));
+
+    const track = scene.settings.race.track;
+    const centerRx = track.rx - track.roadWidth / 2;
+    const centerRy = track.ry - track.roadWidth / 2;
+    const startX = track.cx;
+    const startY = track.cy + centerRy;
+    const colors = ['#ff405f', '#2f7fff', '#ffd43b', '#b45cff', '#35d07f', '#ff8a3d', '#f5f7fb', '#ff66b3', '#64e8ff'];
+
+    scene.entities = [
+      makeEntity('car', {
+        name: 'Player Car',
+        role: 'player',
+        x: startX + 18,
+        y: startY - 8,
+        rotation: Math.PI / 2,
+        color: colors[0],
+        maxSpeed: 465,
+        acceleration: 700,
+        brake: 840,
+        steering: 3.05,
+        grip: 0.986
+      })
+    ];
+
+    for (let i = 0; i < count; i++) {
+      const row = Math.floor(i / 2);
+      const side = i % 2 === 0 ? -1 : 1;
+      scene.entities.push(makeEntity('car', {
+        name: `Rival ${i + 1}`,
+        role: 'ai',
+        x: startX + 48 + row * 54,
+        y: startY + side * 34,
+        rotation: Math.PI / 2,
+        color: colors[(i + 1) % colors.length],
+        aiSkill: level === 'hard' ? 1.08 + i * 0.008 : level === 'easy' ? 0.84 + i * 0.01 : 0.96 + i * 0.012
+      }));
+    }
+
+    for (const angle of [-0.25, Math.PI * 0.72, Math.PI * 1.28]) {
+      scene.entities.push(makeEntity('boost', {
+        name: 'Turbo Pad',
+        x: Math.round(track.cx + centerRx * Math.cos(angle)),
+        y: Math.round(track.cy + centerRy * Math.sin(angle)),
+        rotation: Math.atan2(centerRx * Math.sin(angle), centerRy * Math.cos(angle))
+      }));
+    }
+
+    this.mutate('race:create', (project) => {
+      project.scenes.push(scene);
+      project.currentSceneId = scene.id;
+      project.name = name;
+      project.metadata = {
+        ...(project.metadata ?? {}),
+        gameGenre: 'racing',
+        raceTheme: theme,
+        updatedAt: new Date().toISOString()
+      };
+    }, { sceneId: scene.id, aiCount: count, laps: totalLaps });
+
+    this.selectedId = null;
+    this.emit('scene', { sceneId: scene.id, scene: clone(scene) });
+    this.emit('change', { type: 'race:create', full: true, sceneId: scene.id });
+    return clone(scene);
   }
 
   createScene(name = `Scene ${this.project.scenes.length + 1}`, patch = {}) {

@@ -51,6 +51,40 @@ assert.equal(migrated.version, '0.3.0');
 assert.equal(migrated.scenes.length, 1);
 assert.deepEqual(migrated.scenes[0].entities[0].behaviors, []);
 
+const raceStore = new ProjectStore(createProject());
+const raceTestAgent = new SceneTestAgent(raceStore);
+const raceTools = new ToolRegistry(raceStore, {
+  testScene: (args) => raceTestAgent.run(args),
+  generateAsset: async () => ({ ok: true })
+});
+
+const raceScene = await raceTools.execute('createRaceGame', {
+  name: 'Superstar Arcade GP',
+  aiCount: 6,
+  laps: 3,
+  theme: 'bright tropical arcade racing',
+  difficulty: 'medium'
+});
+
+assert.equal(raceScene.settings.gameMode, 'racing');
+assert.equal(raceScene.settings.race.laps, 3);
+assert.equal(raceScene.entities.filter((entity) => entity.type === 'car' && entity.role === 'player').length, 1);
+assert.equal(raceScene.entities.filter((entity) => entity.type === 'car' && entity.role === 'ai').length, 6);
+assert.equal(raceScene.entities.filter((entity) => entity.type === 'boost').length, 3);
+
+const raceTest = await raceTools.execute('testScene', { goal: 'Validate arcade race' });
+assert.notEqual(raceTest.status, 'fail');
+assert.equal(raceTest.metrics.enemies, 6);
+
+await assert.rejects(
+  () => raceTools.execute('createEntity', { type: 'spaceship' }),
+  /must be one of/
+);
+await assert.rejects(
+  () => raceTools.execute('addBehavior', { entityId: raceScene.entities[0].id, kind: 'carController' }),
+  /must be one of/
+);
+
 JSON.parse(store.serialize());
 assert.equal(player.type, 'player');
-console.log('Hermes Game Engine V0.3 tests: OK');
+console.log('Hermes Game Engine V0.3 + Racing tests: OK');
