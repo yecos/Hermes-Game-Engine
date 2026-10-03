@@ -4,6 +4,8 @@ var track: TrackSpline
 var player: ArcadeCarController3D
 var camera: RaceCamera3D
 var ai_racers: Array[AIRacer3D] = []
+var race_manager: RaceManager3D
+var runtime_bridge: HermesRuntimeBridge
 
 func _ready() -> void:
 	_register_input_actions()
@@ -13,6 +15,7 @@ func _ready() -> void:
 	_spawn_ai()
 	_spawn_camera()
 	_spawn_race_manager()
+	_spawn_runtime_bridge()
 	print("HGE_GODOT_RUNTIME_READY")
 
 func _register_input_actions() -> void:
@@ -25,6 +28,7 @@ func _register_input_actions() -> void:
 	_add_key("steer_right", KEY_D)
 	_add_key("steer_right", KEY_RIGHT)
 	_add_key("boost", KEY_SPACE)
+	_add_key("pit_service", KEY_E)
 
 func _add_key(action: StringName, keycode: Key) -> void:
 	if not InputMap.has_action(action):
@@ -68,6 +72,7 @@ func _build_environment() -> void:
 	add_child(grass)
 
 	_build_scenery()
+	_build_pit_complex()
 
 func _build_scenery() -> void:
 	var tree_positions := [
@@ -113,6 +118,68 @@ func _create_tree(position_value: Vector3, scale_value: float) -> void:
 	crown_material.roughness = 0.95
 	crown.material_override = crown_material
 	root.add_child(crown)
+
+func _build_pit_complex() -> void:
+	var pit_root := Node3D.new()
+	pit_root.name = "PitComplex"
+	add_child(pit_root)
+
+	var concrete := StandardMaterial3D.new()
+	concrete.albedo_color = Color("#d8d8d2")
+	concrete.roughness = 0.9
+
+	var dark := StandardMaterial3D.new()
+	dark.albedo_color = Color("#252a31")
+	dark.roughness = 0.82
+
+	var accent := StandardMaterial3D.new()
+	accent.albedo_color = Color("#e34b4b")
+	accent.roughness = 0.6
+
+	for i in range(6):
+		var garage := MeshInstance3D.new()
+		var garage_mesh := BoxMesh.new()
+		garage_mesh.size = Vector3(4.2, 2.4, 5.0)
+		garage.mesh = garage_mesh
+		garage.position = Vector3(-30.0 + float(i) * 5.0, 1.2, 47.0)
+		garage.material_override = concrete
+		pit_root.add_child(garage)
+
+		var opening := MeshInstance3D.new()
+		var opening_mesh := BoxMesh.new()
+		opening_mesh.size = Vector3(3.2, 1.7, 0.12)
+		opening.mesh = opening_mesh
+		opening.position = garage.position + Vector3(0.0, -0.18, -2.56)
+		opening.material_override = dark
+		pit_root.add_child(opening)
+
+		var banner := MeshInstance3D.new()
+		var banner_mesh := BoxMesh.new()
+		banner_mesh.size = Vector3(3.5, 0.38, 0.16)
+		banner.mesh = banner_mesh
+		banner.position = garage.position + Vector3(0.0, 1.28, -2.62)
+		banner.material_override = accent
+		pit_root.add_child(banner)
+
+	var stand := MeshInstance3D.new()
+	var stand_mesh := BoxMesh.new()
+	stand_mesh.size = Vector3(22.0, 3.8, 7.0)
+	stand.mesh = stand_mesh
+	stand.position = Vector3(23.0, 1.9, 48.0)
+	stand.material_override = dark
+	pit_root.add_child(stand)
+
+	for row in range(3):
+		for column in range(10):
+			var seat := MeshInstance3D.new()
+			var seat_mesh := BoxMesh.new()
+			seat_mesh.size = Vector3(1.5, 0.45, 0.8)
+			seat.mesh = seat_mesh
+			seat.position = stand.position + Vector3(-8.0 + float(column) * 1.75, 0.2 + float(row) * 0.65, -2.2 + float(row) * 1.2)
+			var seat_material := StandardMaterial3D.new()
+			seat_material.albedo_color = Color("#2f7fff") if (column + row) % 2 == 0 else Color("#f0d44b")
+			seat.material_override = seat_material
+			pit_root.add_child(seat)
 
 func _build_track() -> void:
 	track = TrackSpline.new()
@@ -165,10 +232,18 @@ func _spawn_camera() -> void:
 	camera.look_at(player.global_position + forward * camera.look_ahead, Vector3.UP)
 
 func _spawn_race_manager() -> void:
-	var manager := RaceManager3D.new()
-	manager.name = "RaceManager"
-	manager.track = track
-	manager.player = player
-	manager.ai_racers = ai_racers
-	manager.total_laps = 3
-	add_child(manager)
+	race_manager = RaceManager3D.new()
+	race_manager.name = "RaceManager"
+	race_manager.track = track
+	race_manager.player = player
+	race_manager.ai_racers = ai_racers
+	race_manager.total_laps = 3
+	add_child(race_manager)
+
+func _spawn_runtime_bridge() -> void:
+	runtime_bridge = HermesRuntimeBridge.new()
+	runtime_bridge.name = "HermesRuntimeBridge"
+	runtime_bridge.player = player
+	runtime_bridge.track = track
+	runtime_bridge.race_manager = race_manager
+	add_child(runtime_bridge)

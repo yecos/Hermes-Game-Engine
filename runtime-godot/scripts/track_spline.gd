@@ -67,6 +67,23 @@ func is_on_track(world_position: Vector3, extra_margin: float = 0.0) -> bool:
 	var flat_delta := Vector2(world_position.x - closest.x, world_position.z - closest.z)
 	return flat_delta.length() <= road_half_width + extra_margin
 
+func get_sector_index(world_position: Vector3) -> int:
+	var ratio := get_progress_ratio(world_position)
+	if ratio < 0.333333:
+		return 1
+	if ratio < 0.666666:
+		return 2
+	return 3
+
+func is_in_pit_zone(world_position: Vector3) -> bool:
+	var ratio := get_progress_ratio(world_position)
+	var near_start := ratio < 0.07 or ratio > 0.93
+	if not near_start:
+		return false
+	var closest := get_closest_world_point(world_position)
+	var distance := Vector2(world_position.x - closest.x, world_position.z - closest.z).length()
+	return distance <= road_half_width + 1.6
+
 func get_world_transform_at_ratio(ratio: float) -> Transform3D:
 	var length := get_length()
 	var distance := fposmod(ratio, 1.0) * length
@@ -234,6 +251,29 @@ func _build_guardrails() -> void:
 	var mm_instance := MultiMeshInstance3D.new()
 	mm_instance.multimesh = multimesh
 	root.add_child(mm_instance)
+
+	var barrier_body := StaticBody3D.new()
+	barrier_body.name = "GuardrailCollision"
+	root.add_child(barrier_body)
+
+	var collision_spacing := 5.5
+	var collision_count := int(length / collision_spacing)
+	for i in range(collision_count):
+		var distance := float(i) * collision_spacing
+		var frame := _sample_frame(distance)
+		var p: Vector3 = frame.point
+		var right: Vector3 = frame.right
+		var forward: Vector3 = frame.forward
+		var yaw := atan2(forward.x, forward.z)
+
+		for side in [-1.0, 1.0]:
+			var shape_node := CollisionShape3D.new()
+			var shape := BoxShape3D.new()
+			shape.size = Vector3(collision_spacing + 0.8, 1.0, 0.35)
+			shape_node.shape = shape
+			var origin: Vector3 = p + right * float(side) * (road_half_width + curb_width + 1.15) + Vector3.UP * 0.5
+			shape_node.transform = Transform3D(Basis(Vector3.UP, yaw), origin)
+			barrier_body.add_child(shape_node)
 
 func _build_start_line() -> void:
 	var old := get_node_or_null("StartLine")

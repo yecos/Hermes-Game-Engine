@@ -8,45 +8,117 @@ var player: ArcadeCarController3D
 var ai_racers: Array[AIRacer3D] = []
 
 var player_lap: int = 0
+var current_position: int = 1
+var current_sector: int = 1
+var best_lap_time: float = 0.0
+var current_lap_time: float = 0.0
+var last_lap_time: float = 0.0
+var last_sector_time: float = 0.0
+
 var _last_ratio: float = 0.0
+var _lap_started_at: int = 0
+var _sector_started_at: int = 0
+var _last_sector: int = 1
+
 var _position_label: Label
 var _lap_label: Label
 var _speed_label: Label
 var _status_label: Label
+var _timing_label: Label
+var _resources_label: Label
 
 func _ready() -> void:
 	_build_hud()
 
 	if player and track:
 		_last_ratio = track.get_progress_ratio(player.global_position)
+		current_sector = track.get_sector_index(player.global_position)
+		_last_sector = current_sector
+
+	_lap_started_at = Time.get_ticks_msec()
+	_sector_started_at = _lap_started_at
 
 func _process(_delta: float) -> void:
 	if player == null or track == null:
 		return
 
+	var now := Time.get_ticks_msec()
 	var ratio := track.get_progress_ratio(player.global_position)
+	current_sector = track.get_sector_index(player.global_position)
+	current_lap_time = float(now - _lap_started_at) / 1000.0
+
+	if current_sector != _last_sector:
+		last_sector_time = float(now - _sector_started_at) / 1000.0
+		_sector_started_at = now
+		_last_sector = current_sector
 
 	if _last_ratio > 0.88 and ratio < 0.12:
 		player_lap += 1
+		last_lap_time = current_lap_time
+		if best_lap_time <= 0.0 or last_lap_time < best_lap_time:
+			best_lap_time = last_lap_time
+		_lap_started_at = now
+		_sector_started_at = now
+		current_lap_time = 0.0
 
 	_last_ratio = ratio
 	var player_total := float(player_lap) + ratio
 
-	var place := 1
+	current_position = 1
 	for ai in ai_racers:
 		if ai.total_progress() > player_total:
-			place += 1
+			current_position += 1
 
-	_position_label.text = _ordinal(place)
-	_lap_label.text = "LAP %d/%d" % [min(player_lap + 1, total_laps), total_laps]
+	_position_label.text = _ordinal(current_position)
+	_lap_label.text = "LAP %d/%d · S%d" % [min(player_lap + 1, total_laps), total_laps, current_sector]
 	_speed_label.text = "%03d km/h" % int(player.speed_kmh)
 
+	var best_text := "--:--.---"
+	if best_lap_time > 0.0:
+		best_text = _format_time(best_lap_time)
+
+	_timing_label.text = "LAP %s
+BEST %s
+SECTOR %.3fs" % [
+		_format_time(current_lap_time),
+		best_text,
+		last_sector_time
+	]
+
+	_resources_label.text = "FUEL %3d%%
+TIRES %3d%%
+DMG %3d%%" % [
+		int((player.fuel_liters / maxf(0.001, player.fuel_capacity_liters)) * 100.0),
+		int(player.tire_health * 100.0),
+		int(player.damage * 100.0)
+	]
+
 	if player_lap >= total_laps:
-		_status_label.text = "FINISH · " + _ordinal(place)
+		_status_label.text = "FINISH · " + _ordinal(current_position)
+	elif player.pit_servicing:
+		_status_label.text = "PIT SERVICE"
+	elif player.in_pit_lane and player.speed_kmh < 18.0:
+		_status_label.text = "HOLD E FOR PIT"
 	elif player.is_offroad:
 		_status_label.text = "OFF ROAD"
 	else:
 		_status_label.text = ""
+
+func snapshot() -> Dictionary:
+	return {
+		"lap": player_lap,
+		"position": current_position,
+		"sector": current_sector,
+		"current_lap_time": snappedf(current_lap_time, 0.001),
+		"last_lap_time": snappedf(last_lap_time, 0.001),
+		"best_lap_time": snappedf(best_lap_time, 0.001),
+		"last_sector_time": snappedf(last_sector_time, 0.001)
+	}
+
+func _format_time(seconds: float) -> String:
+	var minutes := int(seconds) / 60
+	var remainder := fmod(seconds, 60.0)
+	return "%d:%06.3f" % [minutes, remainder]
 
 func _ordinal(value: int) -> String:
 	var mod10 := value % 10
@@ -79,17 +151,29 @@ func _build_hud() -> void:
 	_position_label.position = Vector2(28, 20)
 	layer.add_child(_position_label)
 
-	_lap_label = _make_label("LAP 1/%d" % total_laps, 22)
+	_lap_label = _make_label("LAP 1/%d · S1" % total_laps, 22)
 	_lap_label.position = Vector2(32, 78)
 	layer.add_child(_lap_label)
 
 	_speed_label = _make_label("000 km/h", 28)
-	_speed_label.position = Vector2(1060, 28)
+	_speed_label.position = Vector2(1050, 28)
 	layer.add_child(_speed_label)
 
-	var controls := _make_label("WASD / ARROWS · SPACE TURBO", 14)
-	controls.position = Vector2(955, 68)
+	var controls := _make_label("WASD / ARROWS · SPACE TURBO · E PIT", 14)
+	controls.position = Vector2(915, 68)
 	layer.add_child(controls)
+
+	_timing_label = _make_label("LAP 0:00.000
+BEST --:--.---
+SECTOR 0.000s", 16)
+	_timing_label.position = Vector2(28, 112)
+	layer.add_child(_timing_label)
+
+	_resources_label = _make_label("FUEL 100%
+TIRES 100%
+DMG   0%", 16)
+	_resources_label.position = Vector2(1080, 110)
+	layer.add_child(_resources_label)
 
 	_status_label = _make_label("", 34)
 	_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER

@@ -1,4 +1,5 @@
 import http from 'node:http';
+import net from 'node:net';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -172,6 +173,93 @@ async function modelInfo() {
   };
 }
 
+function godotCall(command) {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ host: '127.0.0.1', port: 8650 });
+    let buffer = '';
+    const timeout = setTimeout(() => {
+      socket.destroy();
+      reject(new Error('Godot runtime bridge timeout'));
+    }, 3000);
+
+    socket.setEncoding('utf8');
+    socket.on('connect', () => {
+      socket.write(JSON.stringify(command) + '\n');
+    });
+    socket.on('data', (chunk) => {
+      buffer += chunk;
+      const newline = buffer.indexOf('\n');
+      if (newline < 0) return;
+      clearTimeout(timeout);
+      const line = buffer.slice(0, newline).trim();
+      socket.end();
+      try {
+        resolve(JSON.parse(line));
+      } catch {
+        reject(new Error('Godot runtime returned invalid JSON'));
+      }
+    });
+    socket.on('error', (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
+}
+
+async function buildGodotPlan(prompt) {
+  const runtime = await godotCall({ command: 'telemetry' });
+  const telemetry = runtime?.telemetry || {};
+
+  const system = [
+    'You are the live race engineer for Hermes Game Engine Godot runtime.',
+    'Return ONLY one JSON object and no markdown.',
+    'Allowed commands:',
+    '{"command":"telemetry"}',
+    '{"command":"reset_car"}',
+    '{"command":"service_car"}',
+    '{"command":"set_tuning","values":{"top_speed":number?,"acceleration":number?,"brake_force":number?,"lateral_grip":number?,"steering_rate":number?,"turbo_force":number?}}',
+    'Do not invent keys or commands.',
+    'Only change tuning values when the user requests a driving change.',
+    'Keep tuning changes conservative unless the user explicitly asks for a large change.',
+    'CURRENT_TELEMETRY:',
+    JSON.stringify(telemetry)
+  ].join('\n');
+
+  const response = await hermesFetch('/v1/chat/completions', {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'hermes-agent',
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: String(prompt || '') }
+      ],
+      stream: false
+    })
+  });
+
+  const content = response?.choices?.[0]?.message?.content;
+  const plan = extractJsonObject(content);
+  const allowedCommands = new Set(['telemetry', 'reset_car', 'service_car', 'set_tuning']);
+  if (!allowedCommands.has(plan?.command)) {
+    throw new Error(`Godot planner returned unsupported command: ${plan?.command || 'missing'}`);
+  }
+
+  if (plan.command === 'set_tuning') {
+    if (!plan.values || typeof plan.values !== 'object' || Array.isArray(plan.values)) {
+      throw new Error('Godot planner returned invalid tuning values');
+    }
+    const allowedKeys = new Set(['top_speed', 'acceleration', 'brake_force', 'lateral_grip', 'steering_rate', 'turbo_force']);
+    for (const key of Object.keys(plan.values)) {
+      if (!allowedKeys.has(key) || typeof plan.values[key] !== 'number') {
+        throw new Error(`Godot planner returned invalid tuning key: ${key}`);
+      }
+    }
+  }
+
+  const result = await godotCall(plan);
+  return { plan, result, telemetryBefore: telemetry };
+}
+
 async function buildPlan({ prompt, tools, project, activeScene }) {
   const state = compactProject(project, activeScene);
   const system = [
@@ -236,6 +324,30 @@ const server = http.createServer(async (req, res) => {
       const plan = await buildPlan(body);
       const info = await modelInfo().catch(() => ({ model: 'hermes-agent', provider: 'hermes' }));
       return sendJson(res, 200, { ...plan, ...info }, origin);
+    }
+
+    if (req.method === 'GET' && req.url === '/godot/telemetry') {
+      const result = await godotCall({ command: 'telemetry' });
+      return sendJson(res, 200, result, origin);
+    }
+
+    if (req.method === 'POST' && req.url === '/godot') {
+      if (req.headers['x-hge-bridge'] !== '1') {
+        return sendJson(res, 400, { error: 'Missing bridge header' }, origin);
+      }
+      const body = await readJson(req);
+      const result = await godotCall(body);
+      return sendJson(res, result?.ok === false ? 400 : 200, result, origin);
+    }
+
+    if (req.method === 'POST' && req.url === '/godot/plan') {
+      if (req.headers['x-hge-bridge'] !== '1') {
+        return sendJson(res, 400, { error: 'Missing bridge header' }, origin);
+      }
+      const body = await readJson(req);
+      const execution = await buildGodotPlan(body.prompt);
+      const info = await modelInfo().catch(() => ({ model: 'hermes-agent', provider: 'hermes' }));
+      return sendJson(res, 200, { ok: true, ...execution, ...info }, origin);
     }
 
     return sendJson(res, 404, { error: 'Not found' }, origin);
