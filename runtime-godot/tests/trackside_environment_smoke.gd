@@ -26,11 +26,18 @@ func _init() -> void:
 	assert(safe.get_node_or_null("BrakeMarkers") != null, "Brake markers missing")
 	assert(safe.get_node_or_null("SponsorBoards") != null, "Sponsor boards missing")
 	assert(safe.get_node_or_null("CornerSafety") != null, "Corner safety props missing")
+	assert(safe.get_node_or_null("SectorLandmarks") != null, "Sector landmarks missing")
+	assert(safe.get_node_or_null("DistantLandscape") != null, "Distant landscape missing")
+	assert(safe.get_node_or_null("ShrubClusters") != null, "Shrub clusters missing")
+	assert(track.get_node_or_null("Guardrails/CornerPanelsRed") != null, "Red corner impact panels missing")
+	assert(track.get_node_or_null("Guardrails/CornerPanelsWhite") != null, "White corner impact panels missing")
 
 	var pit := safe.get_node("ProPitComplex")
 	var brakes := safe.get_node("BrakeMarkers")
 	var sponsors := safe.get_node("SponsorBoards")
 	var corner_safety := safe.get_node("CornerSafety")
+	var landmarks := safe.get_node("SectorLandmarks")
+	var landscape := safe.get_node("DistantLandscape")
 
 	var garage_count := 0
 	for child in pit.get_children():
@@ -41,9 +48,11 @@ func _init() -> void:
 	assert(brakes.get_child_count() >= 10, "Too few braking reference boards generated")
 	assert(sponsors.get_child_count() >= 5, "Too few sponsor boards generated")
 	assert(corner_safety.get_child_count() >= 8, "Too few corner safety props generated")
+	assert(landmarks.get_child_count() >= 6, "Too few sector landmarks generated")
+	assert(landscape.get_child_count() >= 5, "Too few background hills generated")
 
 	var safe_props := get_nodes_in_group("safe_trackside_prop")
-	assert(safe_props.size() >= 50, "Trackside environment is unexpectedly sparse")
+	assert(safe_props.size() >= 90, "Trackside environment is unexpectedly sparse")
 
 	var flood_count := 0
 	for node in safe.get_children():
@@ -56,6 +65,8 @@ func _init() -> void:
 		" brake_boards=", brakes.get_child_count(),
 		" sponsors=", sponsors.get_child_count(),
 		" corner_safety=", corner_safety.get_child_count(),
+		" landmarks=", landmarks.get_child_count(),
+		" hills=", landscape.get_child_count(),
 		" floodlights=", flood_count
 	)
 

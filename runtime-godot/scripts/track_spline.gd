@@ -654,13 +654,29 @@ func _build_runoff_mesh() -> void:
 		var normal: Vector3 = (f0.normal + f1.normal).normalized()
 		var edge := road_half_width + curb_width
 		var outer := edge + runoff_width
-		var curve_strength := _curve_strength_at_distance((d0 + d1) * 0.5)
-		var straight_color := Color("#596954")
-		var corner_color := Color("#777d76")
-		var color := straight_color.lerp(corner_color, curve_strength)
+		var midpoint := (d0 + d1) * 0.5
+		var curve_strength := _curve_strength_at_distance(midpoint)
+		var signed_curve := _signed_curvature_at_distance(midpoint)
+		var outside_side := 1.0 if signed_curve >= 0.0 else -1.0
 
-		_add_quad(surface, p0-r0*outer, p0-r0*edge, p1-r1*edge, p1-r1*outer, color, Vector2.ZERO,Vector2.RIGHT,Vector2.ONE,Vector2.DOWN,normal)
-		_add_quad(surface, p0+r0*edge, p0+r0*outer, p1+r1*outer, p1+r1*edge, color, Vector2.ZERO,Vector2.RIGHT,Vector2.ONE,Vector2.DOWN,normal)
+		var straight_shoulder := Color("#465449")
+		var inside_asphalt := Color("#4c5352")
+		var gravel := Color("#8b8068")
+		var gravel_light := Color("#9b9075")
+		var band := 0.5 + 0.5 * sin(midpoint * 0.10)
+		var outside_color := gravel.lerp(gravel_light, band * 0.30)
+		var inside_color := straight_shoulder.lerp(inside_asphalt, curve_strength * 0.72)
+		var left_color := inside_color
+		var right_color := inside_color
+
+		if curve_strength > 0.22:
+			if outside_side < 0.0:
+				left_color = inside_color.lerp(outside_color, curve_strength)
+			else:
+				right_color = inside_color.lerp(outside_color, curve_strength)
+
+		_add_quad(surface, p0-r0*outer, p0-r0*edge, p1-r1*edge, p1-r1*outer, left_color, Vector2.ZERO,Vector2.RIGHT,Vector2.ONE,Vector2.DOWN,normal)
+		_add_quad(surface, p0+r0*edge, p0+r0*outer, p1+r1*outer, p1+r1*edge, right_color, Vector2.ZERO,Vector2.RIGHT,Vector2.ONE,Vector2.DOWN,normal)
 
 	var material := StandardMaterial3D.new()
 	material.vertex_color_use_as_albedo = true
@@ -924,6 +940,8 @@ func _build_guardrails() -> void:
 	var visual_spacing := 4.0 if active_layout == "red_blue_pro" else 2.4
 	var visual_segments := int(ceil(length / visual_spacing))
 	var visual_transforms: Array[Transform3D] = []
+	var panel_red_transforms: Array[Transform3D] = []
+	var panel_white_transforms: Array[Transform3D] = []
 
 	for i in range(visual_segments):
 		var distance := minf((float(i) + 0.5) * visual_spacing, length - 0.01)
@@ -941,6 +959,20 @@ func _build_guardrails() -> void:
 			var outer_offset := get_barrier_offset(1.0, ratio)
 			if outer_offset > base_offset + 0.6 and not _barrier_conflicts_with_other_track(frame, 1.0, outer_offset, distance):
 				visual_transforms.append(_barrier_transform(frame, 1.0, outer_offset, 0.42))
+
+		# High-load corner exteriors get red/white impact panels in front of the
+		# metallic rail. This breaks the visual repetition and makes braking zones
+		# readable from the chase camera without changing collision geometry.
+		var curve_strength := _curve_strength_at_distance(distance)
+		if curve_strength > 0.62:
+			var signed_curve := _signed_curvature_at_distance(distance)
+			var outside_side := 1.0 if signed_curve >= 0.0 else -1.0
+			if not _barrier_conflicts_with_other_track(frame, outside_side, base_offset - 0.16, distance):
+				var panel_transform := _barrier_transform(frame, outside_side, base_offset - 0.16, 0.50)
+				if int(floor(distance / 4.0)) % 2 == 0:
+					panel_red_transforms.append(panel_transform)
+				else:
+					panel_white_transforms.append(panel_transform)
 
 	var rail_mesh := BoxMesh.new()
 	rail_mesh.size = Vector3(0.20, 0.86, visual_spacing + 0.45)
@@ -961,6 +993,9 @@ func _build_guardrails() -> void:
 	visual_instance.name = "GuardrailVisual"
 	visual_instance.multimesh = multimesh
 	root.add_child(visual_instance)
+
+	_add_corner_panel_multimesh(root, "CornerPanelsRed", panel_red_transforms, Color("#c9353f"), visual_spacing)
+	_add_corner_panel_multimesh(root, "CornerPanelsWhite", panel_white_transforms, Color("#ece9df"), visual_spacing)
 
 	# Physical enclosure uses overlapping short boxes. This prevents collision gaps
 	# even through high-curvature sections and banking transitions.
@@ -986,6 +1021,35 @@ func _build_guardrails() -> void:
 			var outer_offset := get_barrier_offset(1.0, ratio)
 			if outer_offset > base_offset + 0.6 and not _barrier_conflicts_with_other_track(frame, 1.0, outer_offset, distance):
 				_add_barrier_collision(body, frame, 1.0, outer_offset, collision_spacing, "PIT_R", i)
+
+func _add_corner_panel_multimesh(
+	root: Node3D,
+	name_value: String,
+	transforms: Array[Transform3D],
+	color: Color,
+	spacing: float
+) -> void:
+	if transforms.is_empty():
+		return
+	var panel_mesh := BoxMesh.new()
+	panel_mesh.size = Vector3(0.28, 1.02, spacing + 0.32)
+	var panel_material := StandardMaterial3D.new()
+	panel_material.albedo_color = color
+	panel_material.roughness = 0.58
+	panel_material.metallic = 0.06
+	panel_mesh.material = panel_material
+
+	var panel_multi := MultiMesh.new()
+	panel_multi.transform_format = MultiMesh.TRANSFORM_3D
+	panel_multi.mesh = panel_mesh
+	panel_multi.instance_count = transforms.size()
+	for i in range(transforms.size()):
+		panel_multi.set_instance_transform(i, transforms[i])
+
+	var instance := MultiMeshInstance3D.new()
+	instance.name = name_value
+	instance.multimesh = panel_multi
+	root.add_child(instance)
 
 func _add_barrier_collision(
 	body: StaticBody3D,

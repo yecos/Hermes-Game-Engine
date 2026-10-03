@@ -164,8 +164,16 @@ func _spawn_safe_trackside_asset(
 	asset.scale = Vector3.ONE * scale_value
 	asset.add_to_group("safe_trackside_prop")
 
-	var lod_distance := 120.0 if asset_name == "grandstand" or asset_name == "light_mast" else 88.0
-	AssetLibrary3D.apply_lod(asset, lod_distance, 14.0)
+	var lod_distance := 120.0
+	if asset_name == "grandstand":
+		lod_distance = 230.0
+	elif asset_name == "light_mast":
+		lod_distance = 210.0
+	elif asset_name == "tree_lush":
+		lod_distance = 155.0
+	elif asset_name == "paddock_tent" or asset_name == "service_van":
+		lod_distance = 145.0
+	AssetLibrary3D.apply_lod(asset, lod_distance, 18.0)
 	return asset
 
 func _rebuild_safe_trackside() -> void:
@@ -185,13 +193,18 @@ func _rebuild_safe_trackside() -> void:
 	_build_braking_markers(root)
 	_build_sponsor_boards(root)
 	_build_corner_safety_props(root)
+	_build_sector_landmarks(root)
+	_build_distant_landscape(root)
+	_build_shrub_clusters(root)
 
 	# Spectator zones sit at distinct parts of the lap instead of following the
 	# road continuously. This gives the circuit recognizable visual sectors.
 	for data in [
 		[0.025, -1.0, 10.0, 1.12, 180.0],
+		[0.175, 1.0, 12.5, 0.96, 0.0],
 		[0.285, 1.0, 11.5, 1.05, 0.0],
 		[0.515, -1.0, 12.0, 1.00, 180.0],
+		[0.680, -1.0, 13.0, 0.96, 180.0],
 		[0.805, 1.0, 10.5, 1.08, 0.0]
 	]:
 		_spawn_safe_trackside_asset(
@@ -201,12 +214,14 @@ func _rebuild_safe_trackside() -> void:
 
 	# A denser but still LOD-controlled forest makes the 2.8 km environment feel
 	# occupied without placing geometry close to the racing surface.
-	for i in range(48):
-		var ratio := fposmod(0.012 + float(i) / 48.0, 1.0)
+	for i in range(64):
+		var ratio := fposmod(0.008 + float(i) / 64.0, 1.0)
 		var side := -1.0 if i % 2 == 0 else 1.0
-		var extra := 11.0 + float((i * 7) % 6) * 2.2
-		var scale_value := 0.78 + float(i % 5) * 0.10
+		var extra := 10.0 + float((i * 7) % 7) * 2.3
+		var scale_value := 0.76 + float(i % 5) * 0.11
 		_spawn_safe_trackside_asset(root, "tree_lush", ratio, side, extra, scale_value, float(i * 37))
+		if i % 3 == 0:
+			_spawn_safe_trackside_asset(root, "tree_lush", fposmod(ratio + 0.0035, 1.0), side, extra + 7.0, scale_value * 1.12, float(i * 53 + 17))
 
 	# Lighting landmarks around the major braking and spectator zones.
 	for data in [
@@ -484,6 +499,151 @@ func _build_corner_safety_props(root: Node3D) -> void:
 					fposmod(ratio - 0.010 + float(j) * 0.0017, 1.0),
 					-outside_side, 1.2, 0.82, 0.0
 				)
+
+
+func _build_sector_landmarks(root: Node3D) -> void:
+	var landmark_root := Node3D.new()
+	landmark_root.name = "SectorLandmarks"
+	root.add_child(landmark_root)
+
+	_create_sector_bridge(landmark_root, 0.335, "SECTOR 2", Color("#245fa9"))
+	_create_sector_bridge(landmark_root, 0.665, "SECTOR 3", Color("#c93440"))
+
+	var marshal_data := [
+		[0.075, -1.0], [0.205, 1.0], [0.365, -1.0], [0.525, 1.0],
+		[0.705, -1.0], [0.865, 1.0]
+	]
+	for i in range(marshal_data.size()):
+		var ratio := float(marshal_data[i][0])
+		var side := float(marshal_data[i][1])
+		var anchor := _trackside_anchor(ratio, side, 3.4, false)
+		if not bool(anchor.get("valid", false)):
+			continue
+
+		var hut := Node3D.new()
+		hut.name = "MarshalPost_%02d" % (i + 1)
+		hut.global_transform = anchor.transform
+		hut.add_to_group("safe_trackside_prop")
+		landmark_root.add_child(hut)
+
+		var shell := _make_trackside_material(Color("#e8e1cf"), 0.82, 0.01)
+		var dark := _make_trackside_material(Color("#252b30"), 0.55, 0.12)
+		var safety := _make_trackside_material(Color("#f05a32"), 0.58, 0.02)
+		var glass := _make_trackside_material(Color("#24434f"), 0.24, 0.10)
+		_add_trackside_box(hut, "Cabin", Vector3(2.8, 2.2, 2.4), Vector3(0.0, 1.10, 0.0), shell)
+		_add_trackside_box(hut, "Window", Vector3(2.0, 0.78, 0.10), Vector3(0.0, 1.45, -1.24), glass)
+		_add_trackside_box(hut, "Roof", Vector3(3.15, 0.22, 2.75), Vector3(0.0, 2.30, 0.0), safety)
+		_add_trackside_box(hut, "Rail", Vector3(3.3, 0.12, 0.12), Vector3(0.0, 0.85, -1.70), dark)
+		_create_dual_label(hut, "M%d" % (i + 1), Vector3(0.0, 2.31, -1.40), 30, 0.014)
+
+func _create_sector_bridge(
+	root: Node3D,
+	ratio: float,
+	label_text: String,
+	accent_color: Color
+) -> void:
+	var frame := track.get_world_transform_at_ratio(ratio)
+	var forward := -frame.basis.z.normalized()
+	var yaw := atan2(forward.x, forward.z)
+	var left_x := -(track.get_barrier_offset(-1.0, ratio) + 0.9)
+	var right_x := track.get_barrier_offset(1.0, ratio) + 0.9
+	var center_x := (left_x + right_x) * 0.5
+	var span := right_x - left_x
+
+	var bridge := Node3D.new()
+	bridge.name = label_text.replace(" ", "_")
+	bridge.global_transform = Transform3D(Basis(Vector3.UP, yaw), frame.origin)
+	root.add_child(bridge)
+
+	var steel := _make_trackside_material(Color("#c8cdd0"), 0.34, 0.58)
+	var panel := _make_trackside_material(accent_color, 0.48, 0.06)
+	_add_trackside_box(bridge, "PostL", Vector3(0.24, 5.0, 0.24), Vector3(left_x, 2.5, 0.0), steel)
+	_add_trackside_box(bridge, "PostR", Vector3(0.24, 5.0, 0.24), Vector3(right_x, 2.5, 0.0), steel)
+	_add_trackside_box(bridge, "Header", Vector3(span + 0.25, 1.05, 0.34), Vector3(center_x, 4.55, 0.0), panel)
+	_create_dual_label(bridge, label_text, Vector3(center_x, 4.56, 0.0), 44, 0.016)
+
+func _build_distant_landscape(root: Node3D) -> void:
+	var landscape := Node3D.new()
+	landscape.name = "DistantLandscape"
+	root.add_child(landscape)
+
+	var hill_material_a := _make_trackside_material(Color("#355b37"), 0.98, 0.0)
+	var hill_material_b := _make_trackside_material(Color("#476a3f"), 0.98, 0.0)
+	var hill_data := [
+		[0.07, -1.0, 54.0, Vector3(38.0, 9.0, 25.0)],
+		[0.19, 1.0, 62.0, Vector3(46.0, 11.0, 28.0)],
+		[0.31, -1.0, 58.0, Vector3(34.0, 8.0, 23.0)],
+		[0.44, 1.0, 65.0, Vector3(52.0, 12.0, 31.0)],
+		[0.58, -1.0, 57.0, Vector3(40.0, 10.0, 25.0)],
+		[0.72, 1.0, 63.0, Vector3(47.0, 11.0, 29.0)],
+		[0.84, -1.0, 55.0, Vector3(36.0, 8.5, 24.0)],
+		[0.94, 1.0, 60.0, Vector3(44.0, 10.5, 27.0)]
+	]
+
+	for i in range(hill_data.size()):
+		var ratio := float(hill_data[i][0])
+		var side := float(hill_data[i][1])
+		var clearance := float(hill_data[i][2])
+		var scale_value: Vector3 = hill_data[i][3]
+		var anchor := _trackside_anchor(ratio, side, clearance, false)
+		if not bool(anchor.get("valid", false)):
+			continue
+		var hill := MeshInstance3D.new()
+		hill.name = "Hill_%02d" % (i + 1)
+		var sphere := SphereMesh.new()
+		sphere.radius = 1.0
+		sphere.height = 2.0
+		sphere.radial_segments = 16
+		sphere.rings = 8
+		hill.mesh = sphere
+		hill.global_transform = anchor.transform
+		hill.scale = scale_value
+		hill.position.y -= scale_value.y * 0.70
+		hill.material_override = hill_material_a if i % 2 == 0 else hill_material_b
+		landscape.add_child(hill)
+
+
+func _build_shrub_clusters(root: Node3D) -> void:
+	var transforms: Array[Transform3D] = []
+	for i in range(96):
+		var ratio := fposmod(0.004 + float(i) / 96.0, 1.0)
+		var side := -1.0 if (i % 4) < 2 else 1.0
+		var clearance := 5.8 + float((i * 5) % 6) * 1.65
+		if i % 5 == 0:
+			clearance += 6.0
+		var anchor := _trackside_anchor(ratio, side, clearance, false)
+		if not bool(anchor.get("valid", false)):
+			continue
+		var transform: Transform3D = anchor.transform
+		var scale_value := 0.55 + float((i * 7) % 8) * 0.085
+		transform.basis = transform.basis.scaled(Vector3(scale_value * 1.35, scale_value * 0.72, scale_value))
+		transform.origin.y += scale_value * 0.62
+		transforms.append(transform)
+
+	if transforms.is_empty():
+		return
+
+	var shrub_mesh := SphereMesh.new()
+	shrub_mesh.radius = 1.0
+	shrub_mesh.height = 2.0
+	shrub_mesh.radial_segments = 8
+	shrub_mesh.rings = 4
+	var shrub_material := _make_trackside_material(Color("#244c2c"), 0.98, 0.0)
+	shrub_mesh.material = shrub_material
+
+	var multi := MultiMesh.new()
+	multi.transform_format = MultiMesh.TRANSFORM_3D
+	multi.mesh = shrub_mesh
+	multi.instance_count = transforms.size()
+	for i in range(transforms.size()):
+		multi.set_instance_transform(i, transforms[i])
+
+	var instance := MultiMeshInstance3D.new()
+	instance.name = "ShrubClusters"
+	instance.multimesh = multi
+	instance.visibility_range_end = 150.0
+	instance.visibility_range_end_margin = 20.0
+	root.add_child(instance)
 
 func _build_scenery() -> void:
 	var tree_positions := [
