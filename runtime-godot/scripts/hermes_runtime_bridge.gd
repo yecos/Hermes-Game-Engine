@@ -127,7 +127,7 @@ func _handle_line(peer: StreamPeerTCP, line: String) -> void:
 			_send(peer, _replace_track(payload))
 		"reset_track":
 			if track:
-				track.build_default_circuit()
+				track.reset_active_layout()
 				_after_track_edit()
 			_send(peer, {"ok": true, "track": track.track_snapshot() if track else {}})
 		_:
@@ -192,8 +192,9 @@ func _spawn_runtime_asset(payload: Dictionary) -> Dictionary:
 	if instance == null:
 		return {"ok": false, "error": "asset_missing", "asset": asset_name}
 
-	var x := clampf(float(payload.get("x", 0.0)), -70.0, 70.0)
-	var z := clampf(float(payload.get("z", 0.0)), -70.0, 70.0)
+	var placement_bound := maxf(70.0, track.editor_bounds + 40.0) if track else 70.0
+	var x := clampf(float(payload.get("x", 0.0)), -placement_bound, placement_bound)
+	var z := clampf(float(payload.get("z", 0.0)), -placement_bound, placement_bound)
 	var scale_value := clampf(float(payload.get("scale", 1.0)), 0.35, 2.5)
 	var rotation_value := clampf(float(payload.get("rotation", 0.0)), -360.0, 360.0)
 	var surface_y := TerrainBuilder3D.height_at(x, z)
@@ -314,8 +315,17 @@ func _update_test_run(delta: float) -> void:
 	var elapsed := float(Time.get_ticks_msec() - _test_started_at) / 1000.0
 	if race_manager.player_lap >= _test_target_laps:
 		_finish_test_run(true, "completed")
-	elif elapsed > 75.0:
+	elif elapsed > _test_timeout_seconds():
 		_finish_test_run(false, "timeout")
+
+func _test_timeout_seconds() -> float:
+	if track == null:
+		return 75.0
+	# The original 75 s ceiling was sized for the ~275 m development circuit.
+	# Professional layouts need a distance-aware budget so Hermes can complete
+	# a real physical lap instead of timing out simply because the circuit is long.
+	var expected_lap_seconds := track.get_length() / 16.0
+	return maxf(75.0, expected_lap_seconds * float(maxi(1, _test_target_laps)) * 1.65)
 
 func _finish_test_run(completed: bool, reason: String) -> void:
 	if not _test_running:
@@ -386,6 +396,7 @@ func _telemetry() -> Dictionary:
 		"runtime_spawned": _runtime_assets.size()
 	}
 	payload["track_editor"] = {
+		"layout": track.active_layout if track else "",
 		"point_count": track.control_points.size() if track else 0,
 		"length": snappedf(track.get_length(), 0.1) if track else 0.0,
 		"banking": true,

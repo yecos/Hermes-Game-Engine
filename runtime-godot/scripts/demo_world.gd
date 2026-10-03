@@ -99,6 +99,8 @@ func _build_environment() -> void:
 
 	var terrain := TerrainBuilder3D.new()
 	terrain.name = "RollingTerrain"
+	terrain.world_size = 760.0
+	terrain.resolution = 160
 	add_child(terrain)
 
 func _set_env_if_exists(environment: Environment, property_name: String, value: Variant) -> void:
@@ -452,7 +454,8 @@ func _build_trackside_festival() -> void:
 
 func _build_track() -> void:
 	track = TrackSpline.new()
-	track.name = "GrandCircuit"
+	track.name = "RedBlueCircuitPRO"
+	track.auto_build_layout = "red_blue_pro"
 	add_child(track)
 	if not track.track_rebuilt.is_connected(_rebuild_safe_trackside):
 		track.track_rebuilt.connect(_rebuild_safe_trackside)

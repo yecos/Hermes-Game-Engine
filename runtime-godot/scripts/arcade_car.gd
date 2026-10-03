@@ -743,8 +743,8 @@ func _apply_world_motion(delta: float) -> void:
 
 func _update_surface_height() -> void:
 	var surface_height := TerrainBuilder3D.height_at(global_position.x, global_position.z)
-	if track != null and track.is_on_track(global_position, 1.8):
-		surface_height = track.get_surface_height(global_position)
+	if track != null and track.contains_surface_corridor(global_position, 0.6):
+		surface_height = track.get_drivable_surface_height(global_position)
 	global_position.y = surface_height + ride_height
 	rotation.x = 0.0
 	rotation.z = 0.0
@@ -1112,8 +1112,8 @@ func _spawn_skid_marks(intensity: float) -> void:
 
 		var world_position := to_global(local_position)
 		var mark_height := TerrainBuilder3D.height_at(world_position.x, world_position.z)
-		if track != null and track.is_on_track(world_position, 1.2):
-			mark_height = track.get_surface_height(world_position)
+		if track != null and track.contains_surface_corridor(world_position, 0.2):
+			mark_height = track.get_drivable_surface_height(world_position)
 
 		_skid_root.add_child(marker)
 		marker.global_position = Vector3(world_position.x, mark_height + 0.025, world_position.z)

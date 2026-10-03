@@ -7,6 +7,14 @@ extends Node3D
 @export var pit_half_width: float = 3.0
 @export var pit_offset: float = 11.5
 @export var sample_count: int = 260
+@export var terrain_blend_width: float = 8.0
+@export var pro_centerline_clearance: float = 1.45
+@export var editor_bounds: float = 360.0
+@export var max_control_points: int = 96
+@export var max_segment_length: float = 120.0
+@export var auto_build_layout: String = "default"
+
+var active_layout: String = "default"
 
 var curve: Curve3D = Curve3D.new()
 var path_node: Path3D
@@ -20,9 +28,22 @@ var last_validation_errors: Array[String] = []
 
 func _ready() -> void:
 	if control_points.is_empty():
+		reset_active_layout()
+
+func reset_active_layout() -> void:
+	if auto_build_layout == "red_blue_pro":
+		build_red_blue_pro_circuit()
+	else:
 		build_default_circuit()
 
 func build_default_circuit() -> void:
+	active_layout = "default"
+	road_half_width = 7.2
+	curb_width = 0.75
+	runoff_width = 3.2
+	pit_half_width = 3.0
+	pit_offset = 11.5
+	sample_count = 260
 	var flat_points: Array[Vector2] = [
 		Vector2(-42.0, -8.0),
 		Vector2(-35.0, -28.0),
@@ -45,6 +66,106 @@ func build_default_circuit() -> void:
 		var p := flat_points[i]
 		control_points.append(Vector3(p.x, TerrainBuilder3D.height_at(p.x, p.y) + 0.16, p.y))
 		bank_degrees.append(default_banks[i])
+
+	rebuild()
+
+func build_red_blue_pro_circuit() -> void:
+	active_layout = "red_blue_pro"
+	road_half_width = 5.5
+	curb_width = 0.75
+	runoff_width = 4.5
+	pit_half_width = 3.0
+	pit_offset = 12.0
+	terrain_blend_width = 8.0
+	sample_count = 1100
+	editor_bounds = 360.0
+	max_control_points = 96
+	max_segment_length = 120.0
+
+	var pro_points: Array[Vector3] = [
+		Vector3(-245.602, 0.0, 25.929),
+		Vector3(-234.433, 0.0, -17.662),
+		Vector3(-222.797, 0.0, -61.130),
+		Vector3(-212.319, 0.0, -104.870),
+		Vector3(-178.903, 0.0, -128.499),
+		Vector3(-157.293, 0.0, -94.941),
+		Vector3(-139.766, 0.0, -56.588),
+		Vector3(-128.115, 0.0, -81.815),
+		Vector3(-143.357, 0.0, -122.985),
+		Vector3(-181.252, 0.0, -146.441),
+		Vector3(-220.225, 0.0, -128.179),
+		Vector3(-252.917, 0.0, -97.278),
+		Vector3(-276.159, 0.0, -59.046),
+		Vector3(-288.858, 0.0, -15.980),
+		Vector3(-294.845, 0.0, 28.578),
+		Vector3(-296.359, 0.0, 73.538),
+		Vector3(-296.271, 0.0, 118.537),
+		Vector3(-294.830, 0.0, 163.508),
+		Vector3(-277.705, 0.0, 201.803),
+		Vector3(-233.340, 0.0, 206.659),
+		Vector3(-188.741, 0.0, 203.103),
+		Vector3(-148.112, 0.0, 184.148),
+		Vector3(-112.385, 0.0, 156.857),
+		Vector3(-79.919, 0.0, 125.716),
+		Vector3(-48.474, 0.0, 93.528),
+		Vector3(-18.303, 0.0, 60.159),
+		Vector3(-7.119, 0.0, 17.615),
+		Vector3(-0.116, 0.0, -26.382),
+		Vector3(29.194, 0.0, -60.170),
+		Vector3(69.183, 0.0, -64.571),
+		Vector3(70.412, 0.0, -23.844),
+		Vector3(53.231, 0.0, 17.737),
+		Vector3(70.183, 0.0, 53.680),
+		Vector3(113.985, 0.0, 48.008),
+		Vector3(157.083, 0.0, 35.177),
+		Vector3(200.669, 0.0, 24.016),
+		Vector3(243.898, 0.0, 11.524),
+		Vector3(287.133, 0.0, -0.726),
+		Vector3(285.963, 0.0, -39.204),
+		Vector3(260.313, 0.0, -76.160),
+		Vector3(236.134, 0.0, -114.104),
+		Vector3(210.473, 0.0, -151.062),
+		Vector3(187.138, 0.0, -189.488),
+		Vector3(147.812, 0.0, -206.168),
+		Vector3(116.137, 0.0, -175.672),
+		Vector3(82.563, 0.0, -145.929),
+		Vector3(42.254, 0.0, -126.211),
+		Vector3(-1.714, 0.0, -117.211),
+		Vector3(-45.435, 0.0, -110.367),
+		Vector3(-52.745, 0.0, -69.018),
+		Vector3(-39.414, 0.0, -26.039),
+		Vector3(-27.279, 0.0, 17.266),
+		Vector3(-39.636, 0.0, 57.355),
+		Vector3(-82.345, 0.0, 58.217),
+		Vector3(-105.943, 0.0, 20.463),
+		Vector3(-147.576, 0.0, 9.896),
+		Vector3(-180.454, 0.0, 38.216),
+		Vector3(-195.996, 0.0, 80.423),
+		Vector3(-214.498, 0.0, 121.440),
+		Vector3(-229.582, 0.0, 163.818),
+		Vector3(-263.419, 0.0, 186.896),
+		Vector3(-277.448, 0.0, 150.924),
+		Vector3(-266.574, 0.0, 107.266),
+		Vector3(-255.050, 0.0, 63.768)
+	]
+	var pro_banks: Array[float] = [
+		0.009, 0.018, -0.033, 1.139, 1.977, 0.167, -1.946, -1.187,
+		-1.111, -1.613, -0.525, -0.438, -0.434, -0.259, -0.163, -0.059,
+		-0.054, -0.606, -1.617, -0.319, -0.605, -0.351, -0.192, -0.053,
+		-0.077, -0.804, -0.141, 0.953, 1.335, 1.972, 0.618, -1.236,
+		-1.798, -0.279, 0.059, -0.050, -0.028, -1.601, -0.830, 0.058,
+		-0.064, 0.092, -1.048, -1.807, 0.073, 0.449, 0.421, 0.071,
+		-1.780, -0.769, 0.044, 0.928, 1.947, 1.624, -1.263, -1.587,
+		-0.851, 0.103, -0.124, 0.996, 1.980, 0.883, 0.030, -0.022
+	]
+
+	control_points.clear()
+	bank_degrees.clear()
+	for i in range(pro_points.size()):
+		var p := pro_points[i]
+		var elevation := TerrainBuilder3D.height_at(p.x, p.z) + pro_centerline_clearance
+		control_points.append(Vector3(p.x, elevation, p.z))
+		bank_degrees.append(pro_banks[i])
 
 	rebuild()
 
@@ -73,6 +194,7 @@ func rebuild() -> void:
 
 	_build_road_mesh()
 	_build_runoff_mesh()
+	_build_grass_shoulder_mesh()
 	_build_pit_lane()
 	_build_guardrails()
 	_build_start_line()
@@ -90,6 +212,7 @@ func track_snapshot() -> Dictionary:
 			"bank": snappedf(bank_degrees[i] if i < bank_degrees.size() else 0.0, 0.1)
 		})
 	return {
+		"layout": active_layout,
 		"point_count": control_points.size(),
 		"length": snappedf(get_length(), 0.1),
 		"road_width": road_half_width * 2.0,
@@ -103,12 +226,13 @@ func set_control_point(index: int, x: float, z: float, bank: float) -> bool:
 		last_validation_errors = ["invalid_index"]
 		return false
 
-	x = clampf(x, -65.0, 65.0)
-	z = clampf(z, -65.0, 65.0)
+	x = clampf(x, -editor_bounds, editor_bounds)
+	z = clampf(z, -editor_bounds, editor_bounds)
 	var candidate: Array[Vector3] = []
 	for point in control_points:
 		candidate.append(point)
-	candidate[index] = Vector3(x, TerrainBuilder3D.height_at(x, z) + 0.16, z)
+	var clearance := pro_centerline_clearance if active_layout == "red_blue_pro" else 0.16
+	candidate[index] = Vector3(x, TerrainBuilder3D.height_at(x, z) + clearance, z)
 
 	var errors := _validate_candidate(candidate)
 	if not errors.is_empty():
@@ -131,8 +255,8 @@ func set_bank(index: int, bank: float) -> bool:
 	return true
 
 func replace_control_points(points: Array) -> bool:
-	if points.size() < 6 or points.size() > 24:
-		last_validation_errors = ["point_count_must_be_6_to_24"]
+	if points.size() < 6 or points.size() > max_control_points:
+		last_validation_errors = ["point_count_must_be_6_to_%d" % max_control_points]
 		return false
 
 	var new_points: Array[Vector3] = []
@@ -142,10 +266,11 @@ func replace_control_points(points: Array) -> bool:
 		if typeof(entry) != TYPE_DICTIONARY:
 			last_validation_errors = ["point_payload_must_be_dictionary"]
 			return false
-		var x := clampf(float(entry.get("x", 0.0)), -65.0, 65.0)
-		var z := clampf(float(entry.get("z", 0.0)), -65.0, 65.0)
+		var x := clampf(float(entry.get("x", 0.0)), -editor_bounds, editor_bounds)
+		var z := clampf(float(entry.get("z", 0.0)), -editor_bounds, editor_bounds)
 		var bank := clampf(float(entry.get("bank", 0.0)), -16.0, 16.0)
-		new_points.append(Vector3(x, TerrainBuilder3D.height_at(x, z) + 0.16, z))
+		var clearance := pro_centerline_clearance if active_layout == "red_blue_pro" else 0.16
+		new_points.append(Vector3(x, TerrainBuilder3D.height_at(x, z) + clearance, z))
 		new_banks.append(bank)
 
 	var errors := _validate_candidate(new_points)
@@ -250,15 +375,15 @@ func track_analysis() -> Dictionary:
 func _validate_candidate(points: Array[Vector3]) -> Array[String]:
 	var errors: Array[String] = []
 	var count := points.size()
-	if count < 6 or count > 24:
-		errors.append("point_count_must_be_6_to_24")
+	if count < 6 or count > max_control_points:
+		errors.append("point_count_must_be_6_to_%d" % max_control_points)
 		return errors
 
 	for i in range(count):
 		var segment := points[i].distance_to(points[(i + 1) % count])
 		if segment < 8.0:
 			errors.append("segment_too_short_%d" % i)
-		if segment > 92.0:
+		if segment > max_segment_length:
 			errors.append("segment_too_long_%d" % i)
 
 	if absf(_polygon_area(points)) < 700.0:
@@ -495,6 +620,99 @@ func _build_runoff_mesh() -> void:
 	mesh.material_override = material
 	add_child(mesh)
 
+
+func contains_surface_corridor(world_position: Vector3, extra_margin: float = 0.0) -> bool:
+	if is_in_pit_zone(world_position):
+		return true
+	if get_length() <= 0.0:
+		return false
+	var local_position := to_local(world_position)
+	var offset := curve.get_closest_offset(local_position)
+	var frame := _sample_frame(offset)
+	var lateral := absf((local_position - (frame.point as Vector3)).dot(frame.right as Vector3))
+	var outer := road_half_width + curb_width + runoff_width + terrain_blend_width + extra_margin
+	return lateral <= outer
+
+func get_drivable_surface_height(world_position: Vector3) -> float:
+	if is_in_pit_zone(world_position):
+		return _closest_pit_point(world_position).y
+	if get_length() <= 0.0:
+		return TerrainBuilder3D.height_at(world_position.x, world_position.z)
+
+	var local_position := to_local(world_position)
+	var offset := curve.get_closest_offset(local_position)
+	var frame := _sample_frame(offset)
+	var lateral := (local_position - (frame.point as Vector3)).dot(frame.right as Vector3)
+	var track_height := (frame.point as Vector3).y + (frame.right as Vector3).y * lateral
+	var runoff_outer := road_half_width + curb_width + runoff_width
+	var lateral_abs := absf(lateral)
+
+	if lateral_abs <= runoff_outer:
+		return track_height
+
+	var terrain_height := TerrainBuilder3D.height_at(world_position.x, world_position.z)
+	var blend := smoothstep(runoff_outer, runoff_outer + terrain_blend_width, lateral_abs)
+	return lerpf(track_height, terrain_height, blend)
+
+func _build_grass_shoulder_mesh() -> void:
+	var old := get_node_or_null("GrassShoulders")
+	if old:
+		old.free()
+
+	var surface := SurfaceTool.new()
+	surface.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var length := get_length()
+	var inner_offset := road_half_width + curb_width + runoff_width
+	var outer_offset := inner_offset + terrain_blend_width
+
+	for i in range(sample_count):
+		var d0 := length * float(i) / float(sample_count)
+		var d1 := length * float(i + 1) / float(sample_count)
+		var f0 := _sample_frame(d0)
+		var f1 := _sample_frame(d1)
+		var p0: Vector3 = f0.point
+		var p1: Vector3 = f1.point
+		var r0: Vector3 = f0.right
+		var r1: Vector3 = f1.right
+
+		var left_inner0 := p0 - r0 * inner_offset
+		var left_inner1 := p1 - r1 * inner_offset
+		var left_outer0 := p0 - r0 * outer_offset
+		var left_outer1 := p1 - r1 * outer_offset
+		left_outer0.y = TerrainBuilder3D.height_at(left_outer0.x, left_outer0.z) + 0.01
+		left_outer1.y = TerrainBuilder3D.height_at(left_outer1.x, left_outer1.z) + 0.01
+
+		var right_inner0 := p0 + r0 * inner_offset
+		var right_inner1 := p1 + r1 * inner_offset
+		var right_outer0 := p0 + r0 * outer_offset
+		var right_outer1 := p1 + r1 * outer_offset
+		right_outer0.y = TerrainBuilder3D.height_at(right_outer0.x, right_outer0.z) + 0.01
+		right_outer1.y = TerrainBuilder3D.height_at(right_outer1.x, right_outer1.z) + 0.01
+
+		var left_normal := (left_inner1 - left_inner0).cross(left_outer0 - left_inner0).normalized()
+		if left_normal.y < 0.0:
+			left_normal = -left_normal
+		var right_normal := (right_outer0 - right_inner0).cross(right_inner1 - right_inner0).normalized()
+		if right_normal.y < 0.0:
+			right_normal = -right_normal
+
+		_add_quad(
+			surface,
+			left_outer0, left_inner0, left_inner1, left_outer1,
+			Color.WHITE, Vector2.ZERO, Vector2.RIGHT, Vector2.ONE, Vector2.DOWN, left_normal
+		)
+		_add_quad(
+			surface,
+			right_inner0, right_outer0, right_outer1, right_inner1,
+			Color.WHITE, Vector2.ZERO, Vector2.RIGHT, Vector2.ONE, Vector2.DOWN, right_normal
+		)
+
+	var mesh := MeshInstance3D.new()
+	mesh.name = "GrassShoulders"
+	mesh.mesh = surface.commit()
+	mesh.material_override = WorldMaterials3D.grass_material()
+	add_child(mesh)
+
 func _pit_merge_at_ratio(ratio: float) -> float:
 	var wrapped := fposmod(ratio, 1.0)
 	var t := 0.0
@@ -596,7 +814,7 @@ func _build_guardrails() -> void:
 
 	# Main circuit rails remain visible on both sides. The right side has only two
 	# controlled openings where the pit lane physically joins/leaves the circuit.
-	var visual_spacing := 2.4
+	var visual_spacing := 4.0 if active_layout == "red_blue_pro" else 2.4
 	var visual_segments := int(ceil(length / visual_spacing))
 	var visual_transforms: Array[Transform3D] = []
 
@@ -641,7 +859,7 @@ func _build_guardrails() -> void:
 	body.name = "GuardrailCollision"
 	root.add_child(body)
 
-	var collision_spacing := 1.65
+	var collision_spacing := 3.0 if active_layout == "red_blue_pro" else 1.65
 	var collision_segments := int(ceil(length / collision_spacing))
 	for i in range(collision_segments):
 		var distance := minf((float(i) + 0.5) * collision_spacing, length - 0.01)
