@@ -271,6 +271,16 @@ func _traffic_response() -> Dictionary:
 		"brake": clampf(brake, 0.0, 1.0)
 	}
 
+func reset_race_progress(start_ratio: float = -1.0, lap_index: int = 0) -> void:
+	var ratio := start_ratio
+	if ratio < 0.0:
+		ratio = track.get_progress_ratio(global_position) if track else progress_ratio
+	ratio = fposmod(ratio, 1.0)
+	lap_count = lap_index
+	progress_ratio = ratio
+	_last_progress_ratio = ratio
+	_race_started = false
+
 func total_progress() -> float:
 	return float(lap_count) + progress_ratio
 

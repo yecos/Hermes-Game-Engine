@@ -38,6 +38,7 @@ var _last_sector: int = 1
 
 var _phase_elapsed: float = 0.0
 var _grid_transforms: Dictionary = {}
+var _grid_ai_laps: Dictionary = {}
 var _ai_original_speed_mps: Dictionary = {}
 var _ceremony_initialized: bool = false
 var _formation_last_ratio: float = 0.0
@@ -92,12 +93,18 @@ func begin_race_ceremony() -> void:
 		return
 
 	_grid_transforms.clear()
+	_grid_ai_laps.clear()
 	_ai_original_speed_mps.clear()
 	_grid_transforms[player.get_instance_id()] = player.global_transform
 
+	var player_grid_ratio := track.get_progress_ratio(player.global_position)
 	for ai in ai_racers:
 		_grid_transforms[ai.get_instance_id()] = ai.global_transform
 		_ai_original_speed_mps[ai.get_instance_id()] = ai.speed_mps
+		var ai_grid_ratio := track.get_progress_ratio(ai.global_position)
+		var ai_grid_lap := _grid_lap_relative_to_player(ai_grid_ratio, player_grid_ratio)
+		_grid_ai_laps[ai.get_instance_id()] = ai_grid_lap
+		ai.reset_race_progress(ai_grid_ratio, ai_grid_lap)
 
 	var formation_speed := full_formation_speed_mps if full_formation_lap else formation_speed_mps
 	player.reset_dynamics()
@@ -173,8 +180,11 @@ func _restore_grid() -> void:
 	for ai in ai_racers:
 		if _grid_transforms.has(ai.get_instance_id()):
 			ai.global_transform = _grid_transforms[ai.get_instance_id()]
-		ai.reset_dynamics()
-		ai.autopilot_enabled = false
+			ai.reset_dynamics()
+			ai.autopilot_enabled = false
+			var grid_ratio := track.get_progress_ratio(ai.global_position)
+			var grid_lap := int(_grid_ai_laps.get(ai.get_instance_id(), 0))
+			ai.reset_race_progress(grid_ratio, grid_lap)
 
 func _enter_race() -> void:
 	_phase_elapsed = 0.0
@@ -197,6 +207,16 @@ func _enter_race() -> void:
 	_set_phase("race")
 	set_flag_state("green")
 	_reset_timing_only()
+
+func _grid_lap_relative_to_player(racer_ratio: float, player_ratio: float) -> int:
+	var delta := racer_ratio - player_ratio
+	if delta > 0.5:
+		# Racer is just before start/finish while player is just after it.
+		return -1
+	if delta < -0.5:
+		# Racer is just after start/finish while player is just before it.
+		return 1
+	return 0
 
 func _update_race_progress() -> void:
 	var now := Time.get_ticks_msec()
