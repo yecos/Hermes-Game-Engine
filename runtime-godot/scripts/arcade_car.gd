@@ -1082,7 +1082,15 @@ func _update_visuals(delta: float) -> void:
 		_visual_detail_rig.rotation.x = _visual.rotation.x
 
 	if _brake_light_material:
-		var brake_glow := clampf(brake_input + (0.35 if is_shifting and longitudinal_accel_g < -0.05 else 0.0), 0.0, 1.0)
+		var rain_visibility := _weather_wetness * 0.34
+		var brake_glow := clampf(
+			maxf(
+				brake_input + (0.35 if is_shifting and longitudinal_accel_g < -0.05 else 0.0),
+				rain_visibility
+			),
+			0.0,
+			1.0
+		)
 		_brake_light_material.emission_energy_multiplier = lerpf(0.75, 5.2, brake_glow)
 		_brake_light_material.albedo_color = Color("#8f101d").lerp(Color("#ff3042"), brake_glow)
 	if _headlight_material:

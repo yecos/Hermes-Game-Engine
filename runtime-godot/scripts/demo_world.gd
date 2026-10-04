@@ -8,6 +8,16 @@ var race_manager: RaceManager3D
 var runtime_bridge: HermesRuntimeBridge
 var replay_manager: ReplayManager3D
 var _animated_flags: Array[Node3D] = []
+var _pit_crew_bodies: MultiMeshInstance3D
+var _pit_crew_helmets: MultiMeshInstance3D
+var _pit_crew_arms: MultiMeshInstance3D
+var _pit_crew_body_bases: Array[Transform3D] = []
+var _pit_crew_helmet_bases: Array[Transform3D] = []
+var _pit_crew_arm_bases: Array[Transform3D] = []
+var _lightning_light: DirectionalLight3D
+var _lightning_flash: float = 0.0
+var _lightning_timer: float = 5.5
+var _storm_audio: StormAudio
 
 var current_time_preset: String = "golden_hour"
 var rain_intensity: float = 0.0
@@ -44,6 +54,8 @@ func _process(_delta: float) -> void:
 		flag.rotation.z = sin(phase) * 0.12
 		flag.rotation.y = sin(phase * 0.71) * 0.08
 
+	_animate_pit_crew(clock)
+	_update_storm(_delta)
 	_update_weather_transition(_delta)
 	if _rain_field and player and is_instance_valid(player):
 		_rain_field.global_position = player.global_position + Vector3.UP * 6.5
@@ -212,6 +224,45 @@ func _build_weather_system() -> void:
 	streak.material = streak_material
 	_rain_field.draw_pass_1 = streak
 	add_child(_rain_field)
+
+	_lightning_light = DirectionalLight3D.new()
+	_lightning_light.name = "LightningFlash"
+	_lightning_light.rotation_degrees = Vector3(-62.0, 28.0, 0.0)
+	_lightning_light.light_color = Color("#d8e7ff")
+	_lightning_light.light_energy = 0.0
+	_lightning_light.shadow_enabled = false
+	add_child(_lightning_light)
+
+	_storm_audio = StormAudio.new()
+	_storm_audio.name = "StormAudio"
+	add_child(_storm_audio)
+
+func _update_storm(delta: float) -> void:
+	if _lightning_light == null:
+		return
+
+	if rain_intensity < 0.68:
+		_lightning_flash = move_toward(_lightning_flash, 0.0, delta * 7.0)
+		_lightning_light.light_energy = _lightning_flash * 3.8
+		_lightning_timer = maxf(_lightning_timer, 3.5)
+		return
+
+	_lightning_timer -= delta
+	if _lightning_timer <= 0.0:
+		trigger_lightning()
+		var phase := float(Time.get_ticks_msec() % 4000) / 4000.0
+		_lightning_timer = 5.0 + phase * 4.5
+
+	_lightning_flash = move_toward(_lightning_flash, 0.0, delta * 5.5)
+	_lightning_light.light_energy = _lightning_flash * 4.2
+
+func trigger_lightning(strength: float = 1.0) -> void:
+	var clamped := clampf(strength, 0.2, 1.0)
+	_lightning_flash = clamped
+	if _lightning_light:
+		_lightning_light.light_energy = clamped * 4.2
+	if _storm_audio:
+		_storm_audio.trigger_thunder(clamped)
 
 func cycle_time_of_day() -> void:
 	var index := TIME_PRESETS.find(current_time_preset)
@@ -637,10 +688,56 @@ func _build_start_finish_gantry(root: Node3D) -> void:
 	_create_dual_label(gantry, "RED BLUE CIRCUIT", Vector3(0.0, 5.36, 0.0), 54, 0.018)
 
 	for i in range(5):
-		_add_trackside_box(
+		var light_material := _make_trackside_material(Color("#351015"), 0.30, 0.05)
+		light_material.emission_enabled = true
+		light_material.emission = Color("#e33b45")
+		light_material.emission_energy_multiplier = 0.0
+		var light_node := _add_trackside_box(
 			gantry, "StartLight%d" % i, Vector3(0.34, 0.34, 0.18),
-			Vector3(-0.82 + float(i) * 0.41, 4.58, -0.24), red
+			Vector3(-0.82 + float(i) * 0.41, 4.58, -0.24), light_material
 		)
+		light_node.add_to_group("race_start_light")
+
+func set_start_lights(count: int, green: bool = false) -> void:
+	var nodes := get_tree().get_nodes_in_group("race_start_light")
+	nodes.sort_custom(func(a: Node, b: Node) -> bool: return String(a.name) < String(b.name))
+	for i in range(nodes.size()):
+		var mesh := nodes[i] as MeshInstance3D
+		if mesh == null or not (mesh.material_override is StandardMaterial3D):
+			continue
+		var material := mesh.material_override as StandardMaterial3D
+		if green:
+			material.albedo_color = Color("#0f4a24")
+			material.emission = Color("#42f06f")
+			material.emission_energy_multiplier = 5.0
+		else:
+			var enabled := i < count
+			material.albedo_color = Color("#e33b45") if enabled else Color("#351015")
+			material.emission = Color("#ff3042")
+			material.emission_energy_multiplier = 5.2 if enabled else 0.0
+
+func set_race_flag(state: String) -> void:
+	var normalized := state.to_lower()
+	var flag_meshes := get_tree().get_nodes_in_group("marshal_flag_mesh")
+	for i in range(flag_meshes.size()):
+		var mesh := flag_meshes[i] as MeshInstance3D
+		if mesh == null or not (mesh.material_override is StandardMaterial3D):
+			continue
+		var material := mesh.material_override as StandardMaterial3D
+		var color := Color("#45e271")
+		match normalized:
+			"yellow":
+				color = Color("#f4d447")
+			"red":
+				color = Color("#e33d49")
+			"checkered":
+				color = Color.WHITE if i % 2 == 0 else Color("#15171a")
+			_:
+				color = Color("#45e271")
+		material.albedo_color = color
+		material.emission_enabled = normalized == "green" or normalized == "red"
+		material.emission = color
+		material.emission_energy_multiplier = 0.65 if material.emission_enabled else 0.0
 
 func _build_pro_pit_complex(root: Node3D) -> void:
 	var pit_root := Node3D.new()
@@ -714,6 +811,7 @@ func _build_pit_crew(pit_root: Node3D) -> void:
 
 	var body_transforms: Array[Transform3D] = []
 	var helmet_transforms: Array[Transform3D] = []
+	var arm_transforms: Array[Transform3D] = []
 	for garage_index in range(7):
 		var base_ratio := fposmod(0.962 + float(garage_index) * 0.0034, 1.0)
 		for crew_index in range(2):
@@ -733,6 +831,12 @@ func _build_pit_crew(pit_root: Node3D) -> void:
 			helmet.basis = base.basis.scaled(Vector3(1.0, 1.0, 1.0))
 			helmet_transforms.append(helmet)
 
+			for arm_side in [-1.0, 1.0]:
+				var arm := base
+				arm.origin += Vector3.UP * 0.78
+				arm.origin += base.basis.x.normalized() * arm_side * 0.26
+				arm_transforms.append(arm)
+
 	if body_transforms.is_empty():
 		return
 
@@ -751,6 +855,8 @@ func _build_pit_crew(pit_root: Node3D) -> void:
 	bodies.visibility_range_end = 125.0
 	bodies.visibility_range_end_margin = 18.0
 	crew_root.add_child(bodies)
+	_pit_crew_bodies = bodies
+	_pit_crew_body_bases = body_transforms.duplicate()
 
 	var helmet_mesh := SphereMesh.new()
 	helmet_mesh.radius = 0.15
@@ -770,6 +876,58 @@ func _build_pit_crew(pit_root: Node3D) -> void:
 	helmets.visibility_range_end = 125.0
 	helmets.visibility_range_end_margin = 18.0
 	crew_root.add_child(helmets)
+	_pit_crew_helmets = helmets
+	_pit_crew_helmet_bases = helmet_transforms.duplicate()
+
+	var arm_mesh := BoxMesh.new()
+	arm_mesh.size = Vector3(0.12, 0.56, 0.12)
+	arm_mesh.material = _make_trackside_material(Color("#2a3036"), 0.82, 0.02)
+	var arm_multi := MultiMesh.new()
+	arm_multi.transform_format = MultiMesh.TRANSFORM_3D
+	arm_multi.mesh = arm_mesh
+	arm_multi.instance_count = arm_transforms.size()
+	for i in range(arm_transforms.size()):
+		arm_multi.set_instance_transform(i, arm_transforms[i])
+	var arms := MultiMeshInstance3D.new()
+	arms.name = "PitCrewArms"
+	arms.multimesh = arm_multi
+	arms.visibility_range_end = 125.0
+	arms.visibility_range_end_margin = 18.0
+	crew_root.add_child(arms)
+	_pit_crew_arms = arms
+	_pit_crew_arm_bases = arm_transforms.duplicate()
+
+func _pit_crew_transform(base: Transform3D, index: int, clock: float, helmet: bool, service_boost: float = 1.0) -> Transform3D:
+	var animated := base
+	var rate := (2.7 + float(index % 2) * 0.22) if helmet else (2.4 + float(index % 3) * 0.18)
+	var phase := clock * rate + float(index) * 0.83
+	var bob := 0.045 if helmet else 0.035
+	var sway := 0.055 if helmet else 0.045
+	animated.origin += Vector3.UP * sin(phase) * bob * service_boost
+	animated.origin += base.basis.x.normalized() * sin(phase * 0.61) * sway * service_boost
+	return animated
+
+func _animate_pit_crew(clock: float) -> void:
+	if _pit_crew_bodies == null or _pit_crew_helmets == null or _pit_crew_arms == null:
+		return
+	if _pit_crew_bodies.multimesh == null or _pit_crew_helmets.multimesh == null or _pit_crew_arms.multimesh == null:
+		return
+
+	var service_boost := 1.75 if player and player.pit_servicing else 1.0
+	for i in range(_pit_crew_body_bases.size()):
+		var animated := _pit_crew_transform(_pit_crew_body_bases[i], i, clock, false, service_boost)
+		_pit_crew_bodies.multimesh.set_instance_transform(i, animated)
+
+	for i in range(_pit_crew_helmet_bases.size()):
+		var animated := _pit_crew_transform(_pit_crew_helmet_bases[i], i, clock, true, service_boost)
+		_pit_crew_helmets.multimesh.set_instance_transform(i, animated)
+
+	for i in range(_pit_crew_arm_bases.size()):
+		var arm := _pit_crew_arm_bases[i]
+		var phase := clock * (3.0 + float(i % 4) * 0.17) + float(i) * 0.47
+		arm.origin += Vector3.UP * sin(phase) * 0.025 * service_boost
+		arm.origin += arm.basis.z.normalized() * sin(phase * 0.82) * 0.075 * service_boost
+		_pit_crew_arms.multimesh.set_instance_transform(i, arm)
 
 func _create_brake_marker(
 	root: Node3D,
@@ -919,7 +1077,8 @@ func _build_sector_landmarks(root: Node3D) -> void:
 		_add_trackside_box(flag_pivot, "Pole", Vector3(0.06, 1.45, 0.06), Vector3(0.0, -0.20, 0.0), dark)
 		var flag_color := Color("#f4d447") if i % 3 != 1 else Color("#e33d49")
 		var flag_material := _make_trackside_material(flag_color, 0.76, 0.0)
-		_add_trackside_box(flag_pivot, "Flag", Vector3(0.88, 0.48, 0.035), Vector3(0.46, 0.28, 0.0), flag_material)
+		var flag_mesh := _add_trackside_box(flag_pivot, "Flag", Vector3(0.88, 0.48, 0.035), Vector3(0.46, 0.28, 0.0), flag_material)
+		flag_mesh.add_to_group("marshal_flag_mesh")
 
 func _create_sector_bridge(
 	root: Node3D,

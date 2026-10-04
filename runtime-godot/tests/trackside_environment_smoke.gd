@@ -33,6 +33,7 @@ func _init() -> void:
 	assert(safe.get_node_or_null("CrowdClusters/CrowdHeads") != null, "Crowd head layer missing")
 	assert(safe.get_node_or_null("ProPitComplex/PitCrew/PitCrewBodies") != null, "Pit crew bodies missing")
 	assert(safe.get_node_or_null("ProPitComplex/PitCrew/PitCrewHelmets") != null, "Pit crew helmets missing")
+	assert(safe.get_node_or_null("ProPitComplex/PitCrew/PitCrewArms") != null, "Pit crew arms missing")
 	assert(track.get_node_or_null("Guardrails/CornerPanelsRed") != null, "Red corner impact panels missing")
 	assert(track.get_node_or_null("Guardrails/CornerPanelsWhite") != null, "White corner impact panels missing")
 
