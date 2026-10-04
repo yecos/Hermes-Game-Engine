@@ -15,6 +15,7 @@ extends Node3D
 @export var auto_build_layout: String = "default"
 
 var active_layout: String = "default"
+var surface_wetness: float = 0.0
 
 var curve: Curve3D = Curve3D.new()
 var path_node: Path3D
@@ -198,6 +199,7 @@ func rebuild() -> void:
 	_build_pit_lane()
 	_build_guardrails()
 	_build_start_line()
+	set_surface_wetness(surface_wetness)
 	track_rebuilt.emit()
 
 func track_snapshot() -> Dictionary:
@@ -684,6 +686,22 @@ func _build_runoff_mesh() -> void:
 	mesh.material_override = WorldMaterials3D.runoff_material()
 	add_child(mesh)
 
+
+func set_surface_wetness(value: float) -> void:
+	surface_wetness = clampf(value, 0.0, 1.0)
+	for path in ["RoadMesh/Road", "RoadMesh/Curbs", "Runoff"]:
+		var mesh_instance := get_node_or_null(path) as MeshInstance3D
+		if mesh_instance == null:
+			continue
+		var material := mesh_instance.material_override
+		if material is ShaderMaterial:
+			(material as ShaderMaterial).set_shader_parameter("wetness", surface_wetness)
+
+	var edge_lines := get_node_or_null("RoadMesh/EdgeLines") as MeshInstance3D
+	if edge_lines and edge_lines.material_override is StandardMaterial3D:
+		var line_material := edge_lines.material_override as StandardMaterial3D
+		line_material.roughness = lerpf(0.72, 0.24, surface_wetness)
+		line_material.metallic = lerpf(0.0, 0.02, surface_wetness)
 
 func contains_surface_corridor(world_position: Vector3, extra_margin: float = 0.0) -> bool:
 	if is_in_pit_zone(world_position):

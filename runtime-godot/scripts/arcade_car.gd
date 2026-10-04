@@ -173,6 +173,10 @@ var _dust_timer: float = 0.0
 var _tire_smoke_gpu: GPUParticles3D
 var _offroad_dust_gpu: GPUParticles3D
 var _gravel_debris_gpu: GPUParticles3D
+var _wet_spray_gpu: GPUParticles3D
+var _weather_wetness: float = 0.0
+var _night_factor: float = 0.0
+var _headlight_lights: Array[SpotLight3D] = []
 var _engine_audio: EngineAudio3D
 var _fx_audio: VehicleFxAudio3D
 var _brake_light_material: StandardMaterial3D
@@ -1082,7 +1086,10 @@ func _update_visuals(delta: float) -> void:
 		_brake_light_material.emission_energy_multiplier = lerpf(0.75, 5.2, brake_glow)
 		_brake_light_material.albedo_color = Color("#8f101d").lerp(Color("#ff3042"), brake_glow)
 	if _headlight_material:
-		_headlight_material.emission_energy_multiplier = lerpf(1.8, 2.8, clampf(speed_kmh / 160.0, 0.0, 1.0))
+		_headlight_material.emission_energy_multiplier = (
+			lerpf(1.7, 2.6, clampf(speed_kmh / 160.0, 0.0, 1.0))
+			+ _night_factor * 2.8
+		)
 
 	var steer_angle := deg_to_rad(steering_angle_deg)
 	for i in range(_wheel_nodes.size()):
@@ -1123,6 +1130,19 @@ func _update_effects(delta: float) -> void:
 		var debris_active := offroad_active and speed_kmh > 34.0
 		_gravel_debris_gpu.emitting = debris_active
 		_gravel_debris_gpu.amount_ratio = clampf(0.20 + speed_fx * 0.70, 0.0, 0.90) if debris_active else 0.0
+
+	if _wet_spray_gpu:
+		var spray_active := _weather_wetness > 0.04 and speed_kmh > 18.0
+		_wet_spray_gpu.emitting = spray_active
+		_wet_spray_gpu.amount_ratio = (
+			clampf(_weather_wetness * (0.18 + speed_fx * 0.82), 0.0, 1.0)
+			if spray_active else 0.0
+		)
+
+	if _tire_smoke_gpu and _weather_wetness > 0.0:
+		_tire_smoke_gpu.amount_ratio *= 1.0 - _weather_wetness * 0.72
+	if _offroad_dust_gpu and _weather_wetness > 0.0:
+		_offroad_dust_gpu.amount_ratio *= 1.0 - _weather_wetness * 0.82
 
 	if should_skid and _skid_timer <= 0.0:
 		_spawn_skid_marks(clampf(maxf(drift_intensity, 0.42 if braking_skid else 0.0), 0.18, 1.0))
@@ -1281,6 +1301,19 @@ func _build_visual_details() -> void:
 				_headlight_material
 			)
 		)
+		var headlight := SpotLight3D.new()
+		headlight.name = "HeadlightL" if side < 0.0 else "HeadlightR"
+		headlight.position = Vector3(0.43 * side, 0.54, -1.54)
+		headlight.rotation_degrees = Vector3(-5.0, 0.0, 0.0)
+		headlight.light_color = Color("#fff0c8")
+		headlight.light_energy = 0.0
+		headlight.spot_range = 42.0
+		headlight.spot_angle = 31.0
+		headlight.spot_attenuation = 1.35
+		headlight.shadow_enabled = false
+		_visual_detail_rig.add_child(headlight)
+		_headlight_lights.append(headlight)
+
 		_visual_detail_rig.add_child(
 			RaceCarVisual3D.box(
 				Vector3(0.38, 0.085, 0.055),
@@ -1305,6 +1338,16 @@ func _build_visual_details() -> void:
 			carbon
 		)
 	)
+
+func set_environment_visuals(wetness: float, night_factor: float) -> void:
+	_weather_wetness = clampf(wetness, 0.0, 1.0)
+	_night_factor = clampf(night_factor, 0.0, 1.0)
+	for headlight in _headlight_lights:
+		if not is_instance_valid(headlight):
+			continue
+		headlight.visible = _night_factor > 0.04
+		headlight.light_energy = lerpf(0.0, 11.5, _night_factor)
+		headlight.spot_range = lerpf(30.0, 62.0, _night_factor)
 
 func _build_effects() -> void:
 	_skid_root = Node3D.new()
@@ -1347,6 +1390,23 @@ func _build_effects() -> void:
 
 	_gravel_debris_gpu = _create_gpu_debris_emitter()
 	_gravel_debris_gpu.position = Vector3(0.0, 0.10, 1.05)
+
+	_wet_spray_gpu = _create_gpu_billboard_emitter(
+		"WetSprayGPU",
+		Color(0.72, 0.82, 0.88, 0.20),
+		154,
+		0.68,
+		Vector3(0.76, 0.030, 0.12),
+		Vector3(0.0, 0.26, 0.97),
+		34.0,
+		1.0,
+		4.6,
+		0.12,
+		0.40,
+		Vector3(0.0, -0.22, 0.0),
+		0.14
+	)
+	_wet_spray_gpu.position = Vector3(0.0, 0.10, 1.10)
 
 func _create_gpu_billboard_emitter(
 	name_value: String,

@@ -12,6 +12,14 @@ uniform vec4 asphalt_mid : source_color = vec4(0.105, 0.115, 0.125, 1.0);
 uniform vec4 asphalt_warm : source_color = vec4(0.135, 0.128, 0.116, 1.0);
 uniform vec4 rubber_color : source_color = vec4(0.022, 0.024, 0.027, 1.0);
 uniform vec4 repair_color : source_color = vec4(0.075, 0.078, 0.079, 1.0);
+uniform vec4 wet_reflection_tint : source_color = vec4(0.18, 0.27, 0.34, 1.0);
+uniform float wetness : hint_range(0.0, 1.0) = 0.0;
+
+varying vec3 world_pos;
+
+void vertex() {
+	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+}
 
 float hash21(vec2 p) {
 	p = fract(p * vec2(123.34, 456.21));
@@ -61,10 +69,20 @@ void fragment() {
 	float edge = smoothstep(0.35, 0.49, abs(UV.x - 0.5));
 	base *= 1.0 + edge * 0.035;
 
+	float puddle_a = noise2(world_pos.xz * 0.075 + vec2(21.0, 6.5));
+	float puddle_b = noise2(world_pos.xz * 0.19 + vec2(4.5, 17.0));
+	float puddle_noise = puddle_a * 0.72 + puddle_b * 0.28;
+	float puddle = smoothstep(0.62, 0.87, puddle_noise) * wetness;
+	float wet_mask = clamp(wetness * (0.70 + puddle * 0.30), 0.0, 1.0);
+	vec3 wet_base = base * 0.56 + wet_reflection_tint.rgb * (0.08 + puddle * 0.10);
+	base = mix(base, wet_base, wet_mask * 0.78);
+
+	float dry_roughness = clamp(0.88 - aggregate * 0.075 - rubber * 0.10 + repair * 0.04, 0.64, 0.95);
+	float wet_roughness = mix(0.22, 0.075, puddle);
 	ALBEDO = base;
-	ROUGHNESS = clamp(0.88 - aggregate * 0.075 - rubber * 0.10 + repair * 0.04, 0.64, 0.95);
-	METALLIC = 0.012;
-	SPECULAR = 0.42;
+	ROUGHNESS = mix(dry_roughness, wet_roughness, wet_mask);
+	METALLIC = mix(0.012, 0.002, wet_mask);
+	SPECULAR = mix(0.42, 0.94, wet_mask);
 }
 """
 	var material := ShaderMaterial.new()
@@ -128,6 +146,13 @@ static func curb_material() -> ShaderMaterial:
 shader_type spatial;
 render_mode cull_disabled, diffuse_burley, specular_schlick_ggx;
 
+uniform float wetness : hint_range(0.0, 1.0) = 0.0;
+varying vec3 world_pos;
+
+void vertex() {
+	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+}
+
 float hash21(vec2 p) {
 	p = fract(p * vec2(127.1, 311.7));
 	p += dot(p, p + 19.19);
@@ -157,10 +182,15 @@ void fragment() {
 	base = mix(base, vec3(0.10, 0.095, 0.09), rubber * 0.18);
 	base = mix(base, vec3(0.58, 0.56, 0.52), scuff * edge_wear * 0.10);
 
+	float wet_pattern = noise2(world_pos.xz * 0.22 + vec2(4.0, 9.0));
+	float wet_mask = clamp(wetness * (0.72 + wet_pattern * 0.28), 0.0, 1.0);
+	base = mix(base, base * 0.62 + vec3(0.035, 0.050, 0.062), wet_mask * 0.68);
+	float dry_roughness = clamp(0.72 + rubber * 0.12 + scuff * 0.08, 0.62, 0.92);
+
 	ALBEDO = base;
-	ROUGHNESS = clamp(0.72 + rubber * 0.12 + scuff * 0.08, 0.62, 0.92);
+	ROUGHNESS = mix(dry_roughness, 0.18, wet_mask);
 	METALLIC = 0.0;
-	SPECULAR = 0.36;
+	SPECULAR = mix(0.36, 0.86, wet_mask);
 }
 """
 	var material := ShaderMaterial.new()
@@ -172,6 +202,13 @@ static func runoff_material() -> ShaderMaterial:
 	shader.code = """
 shader_type spatial;
 render_mode cull_disabled, diffuse_burley, specular_schlick_ggx;
+
+uniform float wetness : hint_range(0.0, 1.0) = 0.0;
+varying vec3 world_pos;
+
+void vertex() {
+	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+}
 
 float hash21(vec2 p) {
 	p = fract(p * vec2(269.5, 183.3));
@@ -204,10 +241,16 @@ void fragment() {
 	base = mix(base, pebble, gravelness * smoothstep(0.73, 0.98, stone2) * 0.24);
 	base = mix(base, vec3(0.24, 0.23, 0.21), tire_dust * gravelness * 0.11);
 
+	float wet_pattern = noise2(world_pos.xz * 0.18 + vec2(17.0, 2.0));
+	float wet_mask = clamp(wetness * (0.70 + wet_pattern * 0.30), 0.0, 1.0);
+	base = mix(base, base * mix(0.62, 0.72, gravelness), wet_mask);
+	float dry_roughness = mix(0.86, 0.995, gravelness);
+	float wet_roughness = mix(0.24, 0.72, gravelness);
+
 	ALBEDO = base;
-	ROUGHNESS = mix(0.86, 0.995, gravelness);
+	ROUGHNESS = mix(dry_roughness, wet_roughness, wet_mask);
 	METALLIC = 0.0;
-	SPECULAR = mix(0.38, 0.18, gravelness);
+	SPECULAR = mix(mix(0.38, 0.18, gravelness), mix(0.82, 0.30, gravelness), wet_mask);
 }
 """
 	var material := ShaderMaterial.new()

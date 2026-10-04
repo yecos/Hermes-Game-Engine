@@ -231,7 +231,7 @@ func _build_hud() -> void:
 	var drift_panel := _make_hud_panel(Vector2(18, 650), Vector2(220, 46), Color("#f0c541"))
 	drift_panel.name = "DriftPanel"
 	layer.add_child(drift_panel)
-	var controls_panel := _make_hud_panel(Vector2(350, 664), Vector2(580, 34), Color("#58636c"))
+	var controls_panel := _make_hud_panel(Vector2(265, 664), Vector2(750, 34), Color("#58636c"))
 	controls_panel.name = "ControlsPanel"
 	layer.add_child(controls_panel)
 
@@ -284,10 +284,10 @@ SECTOR 0.000s", 14)
 	_drift_label.size = Vector2(196, 24)
 	layer.add_child(_drift_label)
 
-	var controls := _make_label("W/S DRIVE  ·  A/D STEER  ·  SPACE BOOST  ·  E PIT  ·  R REPLAY", 12)
+	var controls := _make_label("W/S DRIVE  ·  A/D STEER  ·  SPACE BOOST  ·  E PIT  ·  R REPLAY  ·  T TIME  ·  Y RAIN", 12)
 	controls.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	controls.position = Vector2(364, 671)
-	controls.size = Vector2(552, 20)
+	controls.position = Vector2(279, 671)
+	controls.size = Vector2(722, 20)
 	layer.add_child(controls)
 
 	_status_label = _make_label("", 30)

@@ -9,6 +9,16 @@ var runtime_bridge: HermesRuntimeBridge
 var replay_manager: ReplayManager3D
 var _animated_flags: Array[Node3D] = []
 
+var current_time_preset: String = "golden_hour"
+var rain_intensity: float = 0.0
+var _rain_target: float = 0.0
+var _environment_resource: Environment
+var _sky_material: ProceduralSkyMaterial
+var _sun: DirectionalLight3D
+var _sky_fill: DirectionalLight3D
+var _rain_field: GPUParticles3D
+const TIME_PRESETS := ["day", "golden_hour", "night"]
+
 func _ready() -> void:
 	_register_input_actions()
 	_build_environment()
@@ -20,6 +30,8 @@ func _ready() -> void:
 	_spawn_race_manager()
 	_spawn_replay_manager()
 	_spawn_runtime_bridge()
+	_build_weather_system()
+	_apply_visual_state()
 	print("HGE_GODOT_RUNTIME_READY")
 
 func _process(_delta: float) -> void:
@@ -31,6 +43,15 @@ func _process(_delta: float) -> void:
 		var phase := clock * (2.8 + float(i % 3) * 0.22) + float(i) * 1.37
 		flag.rotation.z = sin(phase) * 0.12
 		flag.rotation.y = sin(phase * 0.71) * 0.08
+
+	_update_weather_transition(_delta)
+	if _rain_field and player and is_instance_valid(player):
+		_rain_field.global_position = player.global_position + Vector3.UP * 6.5
+
+	if Input.is_action_just_pressed("cycle_time_of_day"):
+		cycle_time_of_day()
+	if Input.is_action_just_pressed("toggle_rain"):
+		set_rain_enabled(_rain_target < 0.5)
 
 func _register_input_actions() -> void:
 	_add_key("accelerate", KEY_W)
@@ -44,6 +65,8 @@ func _register_input_actions() -> void:
 	_add_key("boost", KEY_SPACE)
 	_add_key("pit_service", KEY_E)
 	_add_key("replay", KEY_R)
+	_add_key("cycle_time_of_day", KEY_T)
+	_add_key("toggle_rain", KEY_Y)
 
 func _add_key(action: StringName, keycode: Key) -> void:
 	if not InputMap.has_action(action):
@@ -89,6 +112,10 @@ func _build_environment() -> void:
 	_set_env_if_exists(environment, "ssao_radius", 1.45)
 	_set_env_if_exists(environment, "ssao_intensity", 2.20)
 	_set_env_if_exists(environment, "ssil_enabled", true)
+	_set_env_if_exists(environment, "ssr_enabled", true)
+	_set_env_if_exists(environment, "ssr_max_steps", 96)
+	_set_env_if_exists(environment, "ssr_fade_in", 0.12)
+	_set_env_if_exists(environment, "ssr_fade_out", 2.4)
 	_set_env_if_exists(environment, "glow_enabled", true)
 	_set_env_if_exists(environment, "glow_intensity", 0.34)
 	_set_env_if_exists(environment, "glow_bloom", 0.040)
@@ -103,6 +130,8 @@ func _build_environment() -> void:
 	_set_env_if_exists(environment, "volumetric_fog_sky_affect", 0.08)
 
 	environment_node.environment = environment
+	_environment_resource = environment
+	_sky_material = sky_material
 	add_child(environment_node)
 
 	var sun := DirectionalLight3D.new()
@@ -116,6 +145,7 @@ func _build_environment() -> void:
 	sun.shadow_blur = 1.05
 	sun.shadow_bias = 0.050
 	sun.shadow_normal_bias = 1.20
+	_sun = sun
 	add_child(sun)
 
 	# A low-energy cool fill keeps the shaded side of cars and pit buildings
@@ -126,6 +156,7 @@ func _build_environment() -> void:
 	sky_fill.light_color = Color("#9fc6df")
 	sky_fill.light_energy = 0.18
 	sky_fill.shadow_enabled = false
+	_sky_fill = sky_fill
 	add_child(sky_fill)
 
 	var terrain := TerrainBuilder3D.new()
@@ -139,6 +170,211 @@ func _set_env_if_exists(environment: Environment, property_name: String, value: 
 		if String(info.name) == property_name:
 			environment.set(property_name, value)
 			return
+
+func _build_weather_system() -> void:
+	_rain_field = GPUParticles3D.new()
+	_rain_field.name = "RainField"
+	_rain_field.amount = 1150
+	_rain_field.lifetime = 0.72
+	_rain_field.randomness = 0.18
+	_rain_field.emitting = false
+	_rain_field.local_coords = false
+	_rain_field.fixed_fps = 30
+	_rain_field.visibility_aabb = AABB(Vector3(-30.0, -16.0, -34.0), Vector3(60.0, 34.0, 68.0))
+
+	var process := ParticleProcessMaterial.new()
+	process.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	process.emission_box_extents = Vector3(18.0, 7.5, 24.0)
+	process.direction = Vector3(-0.13, -1.0, 0.08).normalized()
+	process.spread = 3.5
+	process.initial_velocity_min = 24.0
+	process.initial_velocity_max = 34.0
+	process.gravity = Vector3(0.0, -18.0, 0.0)
+
+	var rain_gradient := Gradient.new()
+	rain_gradient.set_color(0, Color(0.72, 0.84, 0.92, 0.0))
+	rain_gradient.add_point(0.12, Color(0.72, 0.84, 0.92, 0.38))
+	rain_gradient.add_point(0.80, Color(0.60, 0.76, 0.88, 0.30))
+	rain_gradient.set_color(1, Color(0.60, 0.76, 0.88, 0.0))
+	var rain_color := GradientTexture1D.new()
+	rain_color.gradient = rain_gradient
+	process.color_ramp = rain_color
+	_rain_field.process_material = process
+
+	var streak := BoxMesh.new()
+	streak.size = Vector3(0.008, 0.38, 0.008)
+	var streak_material := StandardMaterial3D.new()
+	streak_material.albedo_color = Color(0.78, 0.88, 0.96, 0.30)
+	streak_material.vertex_color_use_as_albedo = true
+	streak_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	streak_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	streak_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	streak.material = streak_material
+	_rain_field.draw_pass_1 = streak
+	add_child(_rain_field)
+
+func cycle_time_of_day() -> void:
+	var index := TIME_PRESETS.find(current_time_preset)
+	index = (index + 1) % TIME_PRESETS.size()
+	set_time_of_day(String(TIME_PRESETS[index]))
+
+func set_time_of_day(preset: String) -> bool:
+	if not TIME_PRESETS.has(preset):
+		return false
+	current_time_preset = preset
+	_apply_visual_state()
+	print("HGE_TIME_PRESET ", current_time_preset)
+	return true
+
+func set_rain_enabled(enabled: bool) -> void:
+	_rain_target = 1.0 if enabled else 0.0
+	print("HGE_RAIN_TARGET ", _rain_target)
+
+func set_rain_intensity(value: float, immediate: bool = true) -> void:
+	_rain_target = clampf(value, 0.0, 1.0)
+	if immediate:
+		rain_intensity = _rain_target
+		_apply_visual_state()
+
+func _update_weather_transition(delta: float) -> void:
+	if is_equal_approx(rain_intensity, _rain_target):
+		return
+	var previous := rain_intensity
+	rain_intensity = move_toward(rain_intensity, _rain_target, delta * 0.24)
+	if absf(rain_intensity - previous) > 0.0001:
+		_apply_visual_state()
+
+func _apply_visual_state() -> void:
+	if _environment_resource == null or _sky_material == null or _sun == null or _sky_fill == null:
+		return
+
+	var sky_top := Color("#214d79")
+	var sky_horizon := Color("#e1a06d")
+	var ground_horizon := Color("#9e8a66")
+	var ground_bottom := Color("#35452f")
+	var ambient_color := Color("#c3b8aa")
+	var ambient_energy := 0.36
+	var exposure := 1.00
+	var contrast := 1.16
+	var saturation := 1.08
+	var sun_rotation := Vector3(-18.0, -58.0, 0.0)
+	var sun_color := Color("#ffb66d")
+	var sun_energy := 2.05
+	var fill_color := Color("#7fa4c8")
+	var fill_energy := 0.14
+	var night_factor := 0.0
+	var base_fog_density := 0.00042
+	var base_volumetric_density := 0.0035
+
+	match current_time_preset:
+		"day":
+			sky_top = Color("#245f92")
+			sky_horizon = Color("#b8d7df")
+			ground_horizon = Color("#b9c9a1")
+			ground_bottom = Color("#3d5237")
+			ambient_color = Color("#c5d9e4")
+			ambient_energy = 0.50
+			exposure = 1.03
+			contrast = 1.13
+			saturation = 1.04
+			sun_rotation = Vector3(-38.0, -42.0, 0.0)
+			sun_color = Color("#ffdda9")
+			sun_energy = 1.68
+			fill_color = Color("#9fc6df")
+			fill_energy = 0.18
+			base_fog_density = 0.00038
+			base_volumetric_density = 0.0032
+		"night":
+			sky_top = Color("#071124")
+			sky_horizon = Color("#1b3150")
+			ground_horizon = Color("#172431")
+			ground_bottom = Color("#081014")
+			ambient_color = Color("#607694")
+			ambient_energy = 0.28
+			exposure = 1.36
+			contrast = 1.12
+			saturation = 0.94
+			sun_rotation = Vector3(-26.0, 34.0, 0.0)
+			sun_color = Color("#b5cce3")
+			sun_energy = 0.18
+			fill_color = Color("#637fa8")
+			fill_energy = 0.34
+			night_factor = 1.0
+			base_fog_density = 0.00055
+			base_volumetric_density = 0.0042
+
+	var rain := clampf(rain_intensity, 0.0, 1.0)
+	var storm_top := Color("#101a26")
+	var storm_horizon := Color("#536474")
+	var storm_ground := Color("#303a36")
+	sky_top = sky_top.lerp(storm_top, rain * 0.72)
+	sky_horizon = sky_horizon.lerp(storm_horizon, rain * 0.74)
+	ground_horizon = ground_horizon.lerp(storm_ground, rain * 0.66)
+	ground_bottom = ground_bottom.lerp(Color("#18211f"), rain * 0.62)
+	ambient_color = ambient_color.lerp(Color("#8798a8"), rain * 0.58)
+	ambient_energy *= lerpf(1.0, 0.80, rain)
+	sun_energy *= lerpf(1.0, 0.48, rain)
+	fill_energy *= lerpf(1.0, 1.18, rain)
+	saturation *= lerpf(1.0, 0.88, rain)
+
+	_sky_material.sky_top_color = sky_top
+	_sky_material.sky_horizon_color = sky_horizon
+	_sky_material.ground_horizon_color = ground_horizon
+	_sky_material.ground_bottom_color = ground_bottom
+	_sky_material.sun_angle_max = 16.0 if current_time_preset == "golden_hour" else 18.0
+
+	_environment_resource.ambient_light_color = ambient_color
+	_environment_resource.ambient_light_energy = ambient_energy
+	_environment_resource.tonemap_exposure = exposure
+	_environment_resource.adjustment_contrast = contrast
+	_environment_resource.adjustment_saturation = saturation
+
+	_set_env_if_exists(_environment_resource, "fog_light_color", sky_horizon.lerp(Color("#aab8c2"), rain * 0.45))
+	_set_env_if_exists(_environment_resource, "fog_density", lerpf(base_fog_density, 0.00125, rain))
+	_set_env_if_exists(_environment_resource, "fog_sky_affect", lerpf(0.03, 0.16, rain))
+	_set_env_if_exists(_environment_resource, "volumetric_fog_density", lerpf(base_volumetric_density, 0.0080, rain))
+	_set_env_if_exists(_environment_resource, "volumetric_fog_ambient_inject", lerpf(0.22, 0.38, rain))
+	_set_env_if_exists(_environment_resource, "volumetric_fog_sky_affect", lerpf(0.08, 0.24, rain))
+
+	_sun.rotation_degrees = sun_rotation
+	_sun.light_color = sun_color
+	_sun.light_energy = sun_energy
+	_sky_fill.light_color = fill_color
+	_sky_fill.light_energy = fill_energy
+
+	if track:
+		track.set_surface_wetness(rain)
+
+	if _rain_field:
+		_rain_field.emitting = rain > 0.015
+		_rain_field.amount_ratio = rain
+
+	for node in get_tree().get_nodes_in_group("race_cars"):
+		if node.has_method("set_environment_visuals"):
+			node.call("set_environment_visuals", rain, night_factor)
+
+	var circuit_light_factor := maxf(night_factor, rain * 0.34)
+	_update_environment_lights(self, circuit_light_factor)
+
+func _update_environment_lights(node: Node, factor: float) -> void:
+	for child in node.get_children():
+		if child is Light3D:
+			var light := child as Light3D
+			if String(light.name) == "FloodLight":
+				light.light_energy = lerpf(0.03, 5.80, factor)
+				if light is OmniLight3D:
+					(light as OmniLight3D).omni_range = lerpf(28.0, 40.0, factor)
+			elif String(light.name) == "GarageLight":
+				light.light_energy = lerpf(0.12, 1.85, factor)
+		_update_environment_lights(child, factor)
+
+func weather_snapshot() -> Dictionary:
+	return {
+		"time_preset": current_time_preset,
+		"rain_intensity": snappedf(rain_intensity, 0.01),
+		"rain_target": snappedf(_rain_target, 0.01),
+		"surface_wetness": snappedf(track.surface_wetness, 0.01) if track else 0.0
+	}
 
 func _spawn_asset(
 	asset_name: String,
